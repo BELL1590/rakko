@@ -1,0 +1,28 @@
+{
+  "name": "rakko-bus",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "草加健康センター「らっこ号 池袋便」予約システム MVP",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run --outdir=dist",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create rakko-bus",
+    "db:migrate:local": "wrangler d1 migrations apply rakko-bus --local",
+    "db:migrate:remote": "wrangler d1 migrations apply rakko-bus --remote",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241218.0",
+    "@types/node": "^22.20.1",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "wrangler": "^3.99.0"
+  }
+}

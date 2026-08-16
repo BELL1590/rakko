@@ -1,0 +1,55 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rakko-bus",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-12-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // 本番Secretは `wrangler secret put` で設定する。
+  // ここには機密値を書かないこと。
+  "vars": {
+    "BASE_URL": "http://localhost:8787",
+    "DEMO_MODE": "false",
+    "ENVIRONMENT": "development"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "rakko-bus",
+      // `npm run db:create` の出力で置き換える
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "triggers": {
+    // 5分おきにリマインド対象をチェックする
+    "crons": ["*/5 * * * *"]
+  },
+
+  "observability": {
+    "enabled": true
+  },
+
+  "env": {
+    "production": {
+      "vars": {
+        "BASE_URL": "https://rakko-bus.example.workers.dev",
+        "DEMO_MODE": "false",
+        "ENVIRONMENT": "production"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "rakko-bus",
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "triggers": {
+        "crons": ["*/5 * * * *"]
+      }
+    }
+  }
+}

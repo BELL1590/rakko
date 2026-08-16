@@ -1,0 +1,29 @@
+# ローカル開発用の環境変数サンプル。
+# このファイルを `.dev.vars` にコピーして値を入れる（.dev.vars はGit管理しない）。
+# 本物の値は絶対にこのファイルへ書かないこと。
+
+# --- LINE Login Channel (LINE Developers Console) ---
+LINE_LOGIN_CHANNEL_ID=
+LINE_LOGIN_CHANNEL_SECRET=
+
+# --- LINE Messaging API Channel ---
+LINE_MESSAGING_CHANNEL_ACCESS_TOKEN=
+
+# --- アプリ設定 ---
+# LINE Login の callback URL 組み立てに使う。末尾スラッシュなし。
+BASE_URL=http://localhost:8787
+
+# セッションCookie署名用のランダム文字列（32文字以上推奨）
+# 生成例: openssl rand -hex 32
+SESSION_SECRET=
+
+# --- 管理画面 ---
+ADMIN_USERNAME=
+ADMIN_PASSWORD=
+
+# --- 開発用の疑似LINEログイン ---
+# production では true にしてはいけない（起動/リクエスト時にエラーになる）
+DEMO_MODE=true
+
+# development | production
+ENVIRONMENT=development

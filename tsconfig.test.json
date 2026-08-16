@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // テストは Node 上で実行するため、Node の型も併せて読み込む
+    "types": ["@cloudflare/workers-types", "node", "vitest/globals"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler"
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}
