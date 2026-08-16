@@ -34,13 +34,6 @@ export const APP_CSS = `
 
 * { box-sizing: border-box; }
 
-/*
- * hidden 属性を常に優先させる。
- * .btn-stack / .party のように display を指定した要素では、UAの [hidden]{display:none}
- * が上書きされてしまい、同行者欄やキャンセル確認の出し分けが効かなくなるため。
- */
-[hidden] { display: none !important; }
-
 html { -webkit-text-size-adjust: 100%; }
 
 body {
@@ -82,20 +75,7 @@ a:hover { color: var(--ink); }
   color: #fff;
   font-size: 0.85rem;
   cursor: pointer;
-  /* 360〜390px で「マイ予約」がピル内で折り返さないようにする */
-  white-space: nowrap;
 }
-/* 長いLINE表示名でヘッダーが崩れないよう省略表示にし、狭い画面では隠す */
-.site-header .header-nav span {
-  max-width: 7em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-@media (max-width: 419px) {
-  .site-header .header-nav span { display: none; }
-}
-.site-header .brand { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .wrap { max-width: 680px; margin: 0 auto; padding: 16px; }
 
