@@ -1,17 +1,18 @@
 /**
- * 通知（予約完了 / 乗車前リマインド）の送信制御。
+ * 通知（予約完了 / 開始前リマインド）の送信制御。
  *
  * - 二重送信は notifications の UNIQUE(booking_id, notification_type) で防ぐ
  * - Messaging API の成功は「配信要求済み(requested)」として扱い、到達保証とはみなさない
  * - 友だち未追加・ブロック等は skipped として記録する
+ * - リマインドは予約枠(reservation_slots.reminder_at)単位で送る
  */
 
 import {
   claimNotification,
   finishNotification,
   getBookingById,
-  getTripById,
   getUserById,
+  listBookingsByIds,
   listDueReminderTargets,
 } from '../db/queries';
 import type { NotificationType } from '../db/types';
@@ -33,73 +34,126 @@ export interface DispatchDeps {
 }
 
 /**
- * 通知1件を送信する。既に送信権が無い場合は 'already'。
+ * 通知を送信する。複数の予約(bookingIds)を1通にまとめる場合は、
+ * すべての予約について送信権を確保できたものだけを対象にする。
  */
 export async function dispatchNotification(
   db: D1Database,
   env: Bindings,
   params: {
-    bookingId: number;
+    bookingIds: number[];
     type: NotificationType;
     lineUserId: string | null;
-    text: string;
+    /** 送信権を取れた予約IDから本文を組み立てる */
+    buildText: (claimedBookingIds: number[]) => string;
   },
   deps: DispatchDeps = {},
   now: string = nowUtc(),
 ): Promise<DispatchOutcome> {
-  const claimed = await claimNotification(
-    db,
-    params.bookingId,
-    params.type,
-    MAX_NOTIFICATION_ATTEMPTS,
-    now,
-  );
-  if (!claimed) return 'already';
-
-  if (!params.lineUserId) {
-    await finishNotification(
+  const claimed: number[] = [];
+  for (const bookingId of params.bookingIds) {
+    const ok = await claimNotification(
       db,
-      params.bookingId,
+      bookingId,
       params.type,
-      'skipped',
-      'no LINE user (admin proxy booking)',
+      MAX_NOTIFICATION_ATTEMPTS,
       now,
     );
+    if (ok) claimed.push(bookingId);
+  }
+  if (claimed.length === 0) return 'already';
+
+  const finishAll = async (
+    status: 'requested' | 'failed' | 'skipped',
+    error: string | null,
+  ): Promise<void> => {
+    for (const bookingId of claimed) {
+      await finishNotification(db, bookingId, params.type, status, error, now);
+    }
+  };
+
+  if (!params.lineUserId) {
+    await finishAll('skipped', 'no LINE user (admin proxy booking)');
     return 'skipped';
   }
 
   if (!hasLineMessagingConfig(env)) {
-    await finishNotification(
-      db,
-      params.bookingId,
-      params.type,
-      'skipped',
-      'messaging channel access token is not configured',
-      now,
-    );
+    await finishAll('skipped', 'messaging channel access token is not configured');
     return 'skipped';
   }
 
   const result = await pushTextMessage({
     accessToken: env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN as string,
     to: params.lineUserId,
-    text: params.text,
+    text: params.buildText(claimed),
     fetchImpl: deps.fetchImpl,
   });
 
   if (result.ok) {
-    await finishNotification(db, params.bookingId, params.type, 'requested', null, now);
+    await finishAll('requested', null);
     return 'requested';
   }
 
   // 4xx（友だち未追加・ブロック等）は再試行しても変わらないため skipped で確定させる
   const status = result.retryable ? 'failed' : 'skipped';
-  await finishNotification(db, params.bookingId, params.type, status, result.error, now);
+  await finishAll(status, result.error);
   return status;
 }
 
-/** 予約完了通知。予約処理をブロックせず、失敗しても予約はロールバックしない。 */
+/**
+ * 予約完了通知。予約処理をブロックせず、失敗しても予約はロールバックしない。
+ * 一括予約（複数枠）は1通にまとめて送る。
+ */
 export async function sendBookingConfirmation(
+  db: D1Database,
+  env: Bindings,
+  bookingIds: number[],
+  deps: DispatchDeps = {},
+  now: string = nowUtc(),
+): Promise<DispatchOutcome> {
+  const bookings = (await listBookingsByIds(db, bookingIds)).filter(
+    (booking) => booking.status === 'confirmed',
+  );
+  if (bookings.length === 0) return 'skipped';
+
+  const first = bookings[0]!;
+  // 管理者代理予約はLINE通知を送らない
+  if (first.source === 'admin' || first.user_id === null) return 'skipped';
+
+  const user = await getUserById(db, first.user_id);
+
+  return await dispatchNotification(
+    db,
+    env,
+    {
+      bookingIds: bookings.map((booking) => booking.id),
+      type: 'booking_confirmation',
+      lineUserId: user?.line_user_id ?? null,
+      buildText: (claimedIds) =>
+        buildBookingConfirmationText({
+          pageTitle: first.page_title,
+          pageType: first.page_type,
+          items: bookings
+            .filter((booking) => claimedIds.includes(booking.id))
+            .map((booking) => ({
+              slot: {
+                name: booking.slot_name,
+                start_at: booking.start_at,
+                origin: booking.origin,
+                destination: booking.destination,
+                location: booking.location,
+              },
+              partySize: booking.party_size,
+            })),
+        }),
+    },
+    deps,
+    now,
+  );
+}
+
+/** 単一予約の予約完了通知（互換用）。 */
+export async function sendBookingConfirmationForBooking(
   db: D1Database,
   env: Bindings,
   bookingId: number,
@@ -107,27 +161,8 @@ export async function sendBookingConfirmation(
   now: string = nowUtc(),
 ): Promise<DispatchOutcome> {
   const booking = await getBookingById(db, bookingId);
-  if (!booking || booking.status !== 'confirmed') return 'skipped';
-
-  // 管理者代理予約はLINE通知を送らない
-  if (booking.source === 'admin' || booking.user_id === null) return 'skipped';
-
-  const user = await getUserById(db, booking.user_id);
-  const trip = await getTripById(db, booking.trip_id, now);
-  if (!trip) return 'skipped';
-
-  return await dispatchNotification(
-    db,
-    env,
-    {
-      bookingId,
-      type: 'booking_confirmation',
-      lineUserId: user?.line_user_id ?? null,
-      text: buildBookingConfirmationText(trip, booking.party_size),
-    },
-    deps,
-    now,
-  );
+  if (!booking) return 'skipped';
+  return await sendBookingConfirmation(db, env, [bookingId], deps, now);
 }
 
 export interface ReminderRunSummary {
@@ -139,8 +174,8 @@ export interface ReminderRunSummary {
 }
 
 /**
- * reminder_at を過ぎた便の確定予約へリマインドを送る。
- * Cron Trigger から5分おきに呼ばれる想定。
+ * reminder_at を過ぎた予約枠の確定予約へリマインドを送る。
+ * Cron Trigger から5分おきに呼ばれる想定。送信単位は枠。
  */
 export async function processDueReminders(
   db: D1Database,
@@ -158,24 +193,27 @@ export async function processDueReminders(
   };
 
   for (const target of targets) {
-    const text = buildReminderText(
-      {
-        direction: target.direction,
+    const text = buildReminderText({
+      pageTitle: target.page_title,
+      pageType: target.page_type,
+      slot: {
+        name: target.slot_name,
+        start_at: target.start_at,
         origin: target.origin,
         destination: target.destination,
-        depart_at: target.depart_at,
+        location: target.location,
       },
-      target.party_size,
-    );
+      partySize: target.party_size,
+    });
 
     const outcome = await dispatchNotification(
       db,
       env,
       {
-        bookingId: target.booking_id,
+        bookingIds: [target.booking_id],
         type: 'reminder',
         lineUserId: target.line_user_id,
-        text,
+        buildText: () => text,
       },
       deps,
       now,

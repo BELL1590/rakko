@@ -45,11 +45,11 @@ describe('予約の所有者チェック', () => {
   it('他人の予約は閲覧できない', async () => {
     const owner = await createTestUser(db.d1, 'OWNER');
     const other = await createTestUser(db.d1, 'OTHER');
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
 
     const created = await createBooking(
       db.d1,
-      { ...base, tripId, userId: owner, partySize: 1, companionNames: [] },
+      { ...base, slotId, userId: owner, partySize: 1, companionNames: [] },
       NOW,
     );
     if (!created.ok) throw new Error('setup failed');
@@ -61,11 +61,11 @@ describe('予約の所有者チェック', () => {
   it('他人の予約はキャンセルできない', async () => {
     const owner = await createTestUser(db.d1, 'OWNER');
     const other = await createTestUser(db.d1, 'OTHER');
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
 
     const created = await createBooking(
       db.d1,
-      { ...base, tripId, userId: owner, partySize: 1, companionNames: [] },
+      { ...base, slotId, userId: owner, partySize: 1, companionNames: [] },
       NOW,
     );
     if (!created.ok) throw new Error('setup failed');
@@ -85,11 +85,11 @@ describe('予約の所有者チェック', () => {
   });
 
   it('HTTP経由でも他人の予約詳細は 404 になる', async () => {
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
     const owner = await createTestUser(db.d1, 'demo-owner');
     const created = await createBooking(
       db.d1,
-      { ...base, tripId, userId: owner, partySize: 1, companionNames: [] },
+      { ...base, slotId, userId: owner, partySize: 1, companionNames: [] },
       NOW,
     );
     if (!created.ok) throw new Error('setup failed');

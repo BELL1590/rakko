@@ -31,11 +31,11 @@ afterEach(() => {
 describe('予約作成', () => {
   it('1名予約が成功する', async () => {
     const userId = await createTestUser(db.d1, 'U1');
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
 
     const result = await createBooking(
       db.d1,
-      { ...base, tripId, userId, partySize: 1, companionNames: [] },
+      { ...base, slotId, userId, partySize: 1, companionNames: [] },
       NOW,
     );
 
@@ -44,13 +44,13 @@ describe('予約作成', () => {
 
   it('4名予約が成功し、同行者3名が保存される', async () => {
     const userId = await createTestUser(db.d1, 'U1');
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
 
     const result = await createBooking(
       db.d1,
       {
         ...base,
-        tripId,
+        slotId,
         userId,
         partySize: 4,
         companionNames: ['同行者A', '同行者B', '同行者C'],
@@ -60,8 +60,8 @@ describe('予約作成', () => {
 
     expect(result.ok).toBe(true);
     const row = await db.d1
-      .prepare('SELECT party_size, companion_names_json FROM bookings WHERE trip_id = ?1')
-      .bind(tripId)
+      .prepare('SELECT party_size, companion_names_json FROM bookings WHERE reservation_slot_id = ?1')
+      .bind(slotId)
       .first<{ party_size: number; companion_names_json: string }>();
     expect(row?.party_size).toBe(4);
     expect(JSON.parse(row!.companion_names_json)).toEqual(['同行者A', '同行者B', '同行者C']);
@@ -69,11 +69,11 @@ describe('予約作成', () => {
 
   it('0名は拒否される', async () => {
     const userId = await createTestUser(db.d1, 'U1');
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
 
     const result = await createBooking(
       db.d1,
-      { ...base, tripId, userId, partySize: 0, companionNames: [] },
+      { ...base, slotId, userId, partySize: 0, companionNames: [] },
       NOW,
     );
 
@@ -82,13 +82,13 @@ describe('予約作成', () => {
 
   it('5名以上は拒否される', async () => {
     const userId = await createTestUser(db.d1, 'U1');
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
 
     const result = await createBooking(
       db.d1,
       {
         ...base,
-        tripId,
+        slotId,
         userId,
         partySize: 5,
         companionNames: ['A', 'B', 'C', 'D'],
@@ -101,11 +101,11 @@ describe('予約作成', () => {
 
   it('同行者名が足りない場合は拒否される', async () => {
     const userId = await createTestUser(db.d1, 'U1');
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
 
     const result = await createBooking(
       db.d1,
-      { ...base, tripId, userId, partySize: 3, companionNames: ['A'] },
+      { ...base, slotId, userId, partySize: 3, companionNames: ['A'] },
       NOW,
     );
 
@@ -114,11 +114,11 @@ describe('予約作成', () => {
 
   it('注意事項未同意は拒否される', async () => {
     const userId = await createTestUser(db.d1, 'U1');
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
 
     const result = await createBooking(
       db.d1,
-      { ...base, agreed: false, tripId, userId, partySize: 1, companionNames: [] },
+      { ...base, agreed: false, slotId, userId, partySize: 1, companionNames: [] },
       NOW,
     );
 
@@ -127,11 +127,11 @@ describe('予約作成', () => {
 
   it('電話番号の形式が不正な場合は拒否される', async () => {
     const userId = await createTestUser(db.d1, 'U1');
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
 
     const result = await createBooking(
       db.d1,
-      { ...base, phone: '123', tripId, userId, partySize: 1, companionNames: [] },
+      { ...base, phone: '123', slotId, userId, partySize: 1, companionNames: [] },
       NOW,
     );
 
@@ -147,12 +147,12 @@ describe('行きと帰りの独立性', () => {
 
     const a = await createBooking(
       db.d1,
-      { ...base, tripId: outbound, userId, partySize: 3, companionNames: ['A', 'B'] },
+      { ...base, slotId: outbound, userId, partySize: 3, companionNames: ['A', 'B'] },
       NOW,
     );
     const b = await createBooking(
       db.d1,
-      { ...base, tripId: inbound, userId, partySize: 2, companionNames: ['A'] },
+      { ...base, slotId: inbound, userId, partySize: 2, companionNames: ['A'] },
       NOW,
     );
 
@@ -161,7 +161,7 @@ describe('行きと帰りの独立性', () => {
 
     const bookings = await listBookingsByUser(db.d1, userId);
     expect(bookings).toHaveLength(2);
-    expect(bookings.map((booking) => booking.direction).sort()).toEqual(['outbound', 'return']);
+    expect(bookings.map((booking) => booking.slot_name).sort()).toEqual(['帰り', '行き']);
   });
 
   it('行きだけ・帰りだけの予約もできる', async () => {
@@ -174,7 +174,7 @@ describe('行きと帰りの独立性', () => {
       (
         await createBooking(
           db.d1,
-          { ...base, tripId: outbound, userId: userA, partySize: 1, companionNames: [] },
+          { ...base, slotId: outbound, userId: userA, partySize: 1, companionNames: [] },
           NOW,
         )
       ).ok,
@@ -183,7 +183,7 @@ describe('行きと帰りの独立性', () => {
       (
         await createBooking(
           db.d1,
-          { ...base, tripId: inbound, userId: userB, partySize: 1, companionNames: [] },
+          { ...base, slotId: inbound, userId: userB, partySize: 1, companionNames: [] },
           NOW,
         )
       ).ok,
@@ -194,16 +194,16 @@ describe('行きと帰りの独立性', () => {
 describe('二重予約の防止', () => {
   it('同一LINEユーザーの同一便二重予約を拒否する', async () => {
     const userId = await createTestUser(db.d1, 'U1');
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
 
     const first = await createBooking(
       db.d1,
-      { ...base, tripId, userId, partySize: 1, companionNames: [] },
+      { ...base, slotId, userId, partySize: 1, companionNames: [] },
       NOW,
     );
     const second = await createBooking(
       db.d1,
-      { ...base, tripId, userId, partySize: 2, companionNames: ['A'] },
+      { ...base, slotId, userId, partySize: 2, companionNames: ['A'] },
       NOW,
     );
 
@@ -218,11 +218,11 @@ describe('二重予約の防止', () => {
 
   it('キャンセル後は同じ便を再予約できる', async () => {
     const userId = await createTestUser(db.d1, 'U1');
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
 
     const first = await createBooking(
       db.d1,
-      { ...base, tripId, userId, partySize: 2, companionNames: ['A'] },
+      { ...base, slotId, userId, partySize: 2, companionNames: ['A'] },
       NOW,
     );
     expect(first.ok).toBe(true);
@@ -237,7 +237,7 @@ describe('二重予約の防止', () => {
 
     const second = await createBooking(
       db.d1,
-      { ...base, tripId, userId, partySize: 4, companionNames: ['A', 'B', 'C'] },
+      { ...base, slotId, userId, partySize: 4, companionNames: ['A', 'B', 'C'] },
       NOW,
     );
     expect(second.ok).toBe(true);
@@ -247,10 +247,10 @@ describe('二重予約の防止', () => {
 describe('キャンセル', () => {
   it('物理削除せず cancelled_at を記録する', async () => {
     const userId = await createTestUser(db.d1, 'U1');
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
     const created = await createBooking(
       db.d1,
-      { ...base, tripId, userId, partySize: 1, companionNames: [] },
+      { ...base, slotId, userId, partySize: 1, companionNames: [] },
       NOW,
     );
     if (!created.ok) throw new Error('setup failed');
@@ -267,10 +267,10 @@ describe('キャンセル', () => {
 
   it('出発後はキャンセルできない', async () => {
     const userId = await createTestUser(db.d1, 'U1');
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
     const created = await createBooking(
       db.d1,
-      { ...base, tripId, userId, partySize: 1, companionNames: [] },
+      { ...base, slotId, userId, partySize: 1, companionNames: [] },
       NOW,
     );
     if (!created.ok) throw new Error('setup failed');
@@ -286,10 +286,10 @@ describe('キャンセル', () => {
 
   it('二重キャンセルは拒否される', async () => {
     const userId = await createTestUser(db.d1, 'U1');
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
     const created = await createBooking(
       db.d1,
-      { ...base, tripId, userId, partySize: 1, companionNames: [] },
+      { ...base, slotId, userId, partySize: 1, companionNames: [] },
       NOW,
     );
     if (!created.ok) throw new Error('setup failed');
@@ -306,16 +306,16 @@ describe('キャンセル', () => {
 
 describe('管理者代理予約', () => {
   it('user_id なし・source=admin で登録でき、受付停止中でも登録できる', async () => {
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
     await db.d1
-      .prepare(`UPDATE trips SET booking_status = 'closed' WHERE id = ?1`)
-      .bind(tripId)
+      .prepare(`UPDATE reservation_slots SET booking_status = 'closed' WHERE id = ?1`)
+      .bind(slotId)
       .run();
 
     const result = await createBooking(
       db.d1,
       {
-        tripId,
+        slotId,
         userId: null,
         source: 'admin',
         representativeName: '電話 太郎',
@@ -329,8 +329,8 @@ describe('管理者代理予約', () => {
 
     expect(result.ok).toBe(true);
     const row = await db.d1
-      .prepare('SELECT user_id, source FROM bookings WHERE trip_id = ?1')
-      .bind(tripId)
+      .prepare('SELECT user_id, source FROM bookings WHERE reservation_slot_id = ?1')
+      .bind(slotId)
       .first<{ user_id: number | null; source: string }>();
     expect(row?.user_id).toBeNull();
     expect(row?.source).toBe('admin');
@@ -338,15 +338,15 @@ describe('管理者代理予約', () => {
 
   it('受付停止中は一般ユーザーの予約を拒否する', async () => {
     const userId = await createTestUser(db.d1, 'U1');
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
     await db.d1
-      .prepare(`UPDATE trips SET booking_status = 'closed' WHERE id = ?1`)
-      .bind(tripId)
+      .prepare(`UPDATE reservation_slots SET booking_status = 'closed' WHERE id = ?1`)
+      .bind(slotId)
       .run();
 
     const result = await createBooking(
       db.d1,
-      { ...base, tripId, userId, partySize: 1, companionNames: [] },
+      { ...base, slotId, userId, partySize: 1, companionNames: [] },
       NOW,
     );
     expect(result).toMatchObject({ ok: false, code: 'CLOSED' });

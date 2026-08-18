@@ -60,12 +60,12 @@ afterEach(() => {
 
 async function book(userSuffix: string, slug: string, partySize = 2): Promise<number> {
   const userId = await createTestUser(db.d1, `U-${userSuffix}`);
-  const tripId = await tripIdBySlug(db.d1, slug);
+  const slotId = await tripIdBySlug(db.d1, slug);
   const result = await createBooking(
     db.d1,
     {
       ...base,
-      tripId,
+      slotId,
       userId,
       partySize,
       companionNames: ['A', 'B', 'C'].slice(0, partySize - 1),
@@ -162,7 +162,7 @@ describe('リマインド', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('出発済みの便へは送信しない', async () => {
+  it('開始済みの枠へは送信しない', async () => {
     await book('1', OUTBOUND_SLUG);
     const fetchImpl = okFetch();
 
@@ -194,17 +194,17 @@ describe('リマインド', () => {
       const init = (call as unknown as [string, RequestInit])[1];
       return (JSON.parse(String(init.body)) as { messages: { text: string }[] }).messages[0]?.text;
     });
-    expect(texts[0]).toContain('らっこ号 池袋便のお知らせ');
-    expect(texts[1]).toContain('らっこ号 帰り便のお知らせ');
+    expect(texts[0]).toContain('らっこ号 池袋便「行き」のお知らせ');
+    expect(texts[1]).toContain('らっこ号 池袋便「帰り」のお知らせ');
     expect(texts[1]).toContain('8:10');
   });
 
   it('管理者代理予約（LINEユーザーなし）は skipped になる', async () => {
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
     const created = await createBooking(
       db.d1,
       {
-        tripId,
+        slotId,
         userId: null,
         source: 'admin',
         representativeName: '電話太郎',
@@ -293,8 +293,8 @@ describe('予約完了通知', () => {
     const fetchImpl = okFetch();
     const deps = { fetchImpl: fetchImpl as unknown as typeof fetch };
 
-    const first = await sendBookingConfirmation(db.d1, env(), bookingId, deps, NOW);
-    const second = await sendBookingConfirmation(db.d1, env(), bookingId, deps, NOW);
+    const first = await sendBookingConfirmation(db.d1, env(), [bookingId], deps, NOW);
+    const second = await sendBookingConfirmation(db.d1, env(), [bookingId], deps, NOW);
 
     expect(first).toBe('requested');
     expect(second).toBe('already');
@@ -308,11 +308,11 @@ describe('予約完了通知', () => {
   });
 
   it('管理者代理予約では送信しない', async () => {
-    const tripId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
+    const slotId = await tripIdBySlug(db.d1, OUTBOUND_SLUG);
     const created = await createBooking(
       db.d1,
       {
-        tripId,
+        slotId,
         userId: null,
         source: 'admin',
         representativeName: '電話太郎',
@@ -329,7 +329,7 @@ describe('予約完了通知', () => {
     const outcome = await sendBookingConfirmation(
       db.d1,
       env(),
-      created.bookingId,
+      [created.bookingId],
       { fetchImpl: fetchImpl as unknown as typeof fetch },
       NOW,
     );
@@ -345,7 +345,7 @@ describe('予約完了通知', () => {
     await sendBookingConfirmation(
       db.d1,
       env(),
-      bookingId,
+      [bookingId],
       { fetchImpl: fetchImpl as unknown as typeof fetch },
       NOW,
     );

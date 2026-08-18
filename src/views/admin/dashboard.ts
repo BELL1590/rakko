@@ -1,7 +1,9 @@
+/** 管理画面のログイン画面とダッシュボード。 */
+
 import { esc } from '../../lib/html';
 import { formatJstLong } from '../../lib/time';
 import { layout } from '../layout';
-import type { TripWithAvailability } from '../../db/types';
+import type { PageWithStats, SlotWithAvailability } from '../../db/types';
 
 export function adminLoginPage(params: {
   csrfToken: string;
@@ -23,47 +25,69 @@ export function adminLoginPage(params: {
 </form>
 `;
   return layout(
-    { title: '管理者ログイン | らっこ号', admin: true, alert: params.alert ?? null },
+    { title: '管理者ログイン | 予約管理', admin: true, alert: params.alert ?? null },
     content,
   );
 }
 
+export interface DashboardEntry {
+  page: PageWithStats;
+  slots: SlotWithAvailability[];
+}
+
 /**
  * 管理ダッシュボード。
- * 業務用のため白ベース・高コントラスト。行き / 帰りの予約状況を最初に見せる。
+ * 公開中の予約ページと、その予約枠の埋まり具合を最初に見せる。
  */
 export function adminDashboardPage(params: {
-  trips: TripWithAvailability[];
+  entries: DashboardEntry[];
   alert?: { type: 'error' | 'success' | 'info'; message: string } | null;
 }): string {
-  const cards = params.trips
-    .map((trip) => {
-      const isReturn = trip.direction === 'return';
-      const label = isReturn ? '帰り便' : '行き便';
-      const statusBadge =
-        trip.booking_status === 'open'
-          ? '<span class="badge badge-open">受付中</span>'
-          : '<span class="badge badge-closed">受付停止</span>';
-      const few = !trip.is_full && trip.remaining_seats <= 6;
-      return `<article class="card admin-card${isReturn ? ' is-return' : ''}">
+  const cards = params.entries
+    .map((entry) => {
+      const slotCards = entry.slots
+        .map((slot) => {
+          const few = !slot.is_full && slot.remaining_seats <= 6;
+          return `<article class="card admin-card">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-    <h3 style="margin:0">${label}</h3>
-    <span>${statusBadge}${trip.is_full ? ' <span class="badge badge-full">満席</span>' : ''}</span>
+    <h3 style="margin:0">${esc(slot.name)}</h3>
+    <span>${
+      slot.booking_status === 'open'
+        ? '<span class="badge badge-open">受付中</span>'
+        : slot.booking_status === 'hidden'
+          ? '<span class="badge badge-proxy">非表示</span>'
+          : '<span class="badge badge-closed">受付停止</span>'
+    }${slot.is_full ? ' <span class="badge badge-full">満席</span>' : ''}</span>
   </div>
-  <p class="muted" style="margin:6px 0 0">${esc(formatJstLong(trip.depart_at))} ／ ${esc(trip.origin)} → ${esc(trip.destination)}</p>
-  <p class="stat">${trip.booked_seats} <small>/ ${trip.capacity}名</small></p>
-  <p class="stat-remaining${few ? ' is-few' : ''}">残り ${trip.remaining_seats}席</p>
+  <p class="muted" style="margin:6px 0 0">${esc(formatJstLong(slot.start_at))}</p>
+  <p class="stat">${slot.booked_seats} <small>/ ${slot.capacity}名</small></p>
+  <p class="stat-remaining${few ? ' is-few' : ''}">残り ${slot.remaining_seats}席</p>
   <div class="progress" aria-hidden="true"><span style="width:${
-    trip.capacity > 0 ? Math.min(100, Math.round((trip.booked_seats / trip.capacity) * 100)) : 0
+    slot.capacity > 0 ? Math.min(100, Math.round((slot.booked_seats / slot.capacity) * 100)) : 0
   }%"></span></div>
-  <a class="btn btn-secondary" style="margin-top:14px" href="/admin/trips/${esc(trip.slug)}">便の詳細・予約一覧</a>
+  <a class="btn btn-secondary" style="margin-top:14px" href="/admin/slots/${slot.id}">予約一覧・受付</a>
 </article>`;
+        })
+        .join('\n');
+
+      return `<h3 style="margin-top:24px">${esc(entry.page.title)}
+  <a class="btn btn-sm btn-secondary" style="margin-left:8px" href="/admin/reservations/${entry.page.id}">設定</a></h3>
+${
+  entry.slots.length === 0
+    ? '<p class="muted">予約枠がまだありません。</p>'
+    : `<div class="admin-grid">${slotCards}</div>`
+}`;
     })
     .join('\n');
 
   const content = `
 <h2>ダッシュボード</h2>
-<div class="admin-grid">${cards}</div>
+<p><a class="btn btn-secondary" href="/admin/reservations">予約ページの管理</a></p>
+${
+  params.entries.length === 0
+    ? '<div class="card"><p class="muted" style="margin:0">公開中の予約ページはありません。</p></div>'
+    : cards
+}
 <h2>その他</h2>
 <div class="card">
   <p style="margin-top:0">リマインドはCron Trigger（5分毎）で自動送信されます。</p>
@@ -74,7 +98,7 @@ export function adminDashboardPage(params: {
 `;
 
   return layout(
-    { title: '管理ダッシュボード | らっこ号', admin: true, alert: params.alert ?? null },
+    { title: '管理ダッシュボード | 予約管理', admin: true, alert: params.alert ?? null },
     content,
   );
 }

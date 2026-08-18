@@ -464,4 +464,32 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .search-form .field { flex: 1; margin: 0; }
 
 .settings-group + .settings-group { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+
+/* ---------- 予約ページ（複数枠選択） ---------- */
+
+.slot-card.is-selected { border-color: var(--red); box-shadow: 0 0 0 3px rgba(208, 18, 27, 0.15); }
+.slot-card.is-return.is-selected { border-color: var(--green); box-shadow: 0 0 0 3px rgba(31, 122, 77, 0.15); }
+
+.slot-pick { margin-top: 14px; padding-top: 14px; border-top: 1px dashed rgba(27, 22, 19, 0.3); }
+.slot-toggle { min-height: 56px; }
+.slot-toggle span { font-size: 1rem; }
+.slot-fields { margin-top: 14px; }
+.slot-fields .field:last-child { margin-bottom: 0; }
+
+.slot-lines { list-style: none; margin: 10px 0 0; padding: 0; }
+.slot-lines li {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 0.92rem;
+}
+.slot-lines li:last-child { border-bottom: 0; }
+.slot-line__name { font-weight: 800; min-width: 3.5em; }
+.slot-line__when { color: var(--ink-soft); }
+.slot-line__seats { margin-left: auto; font-weight: 800; }
+
+.route--single { grid-template-columns: 1fr; }
+.route--single .route__col.to { text-align: left; }
+
+code {
+  background: var(--cream-deep); border-radius: 4px; padding: 1px 5px; font-size: 0.86em;
+}
 `;

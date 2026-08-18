@@ -28,6 +28,19 @@ class TestStatement {
     private readonly params: SqlValue[] = [],
   ) {}
 
+  /** batch() から同一トランザクション内で実行するための内部API。 */
+  execSync(): { success: true; meta: { changes: number; last_row_id: number } } {
+    const statement = this.db.prepare(this.sql);
+    const result = statement.run(...(this.normalized() as never[]));
+    return {
+      success: true,
+      meta: {
+        changes: Number(result.changes),
+        last_row_id: Number(result.lastInsertRowid),
+      },
+    };
+  }
+
   bind(...values: unknown[]): TestStatement {
     return new TestStatement(this.db, this.sql, values as SqlValue[]);
   }
@@ -92,6 +105,21 @@ export function createTestDb(options: { seed?: boolean } = {}): TestDatabase {
 
   const d1 = {
     prepare: (sql: string) => new TestStatement(db, sql),
+    /**
+     * D1 の batch() と同じく、全文を1トランザクションで実行する。
+     * いずれかが失敗したら全体をロールバックする（一括予約の原子性の検証に使う）。
+     */
+    batch: async (statements: TestStatement[]) => {
+      db.exec('BEGIN');
+      try {
+        const results = statements.map((statement) => statement.execSync());
+        db.exec('COMMIT');
+        return results;
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    },
   } as unknown as D1Database;
 
   return { d1, raw: db, close: () => db.close() };
@@ -119,18 +147,128 @@ export async function createTestUser(
   return row!.id;
 }
 
-/** 便のIDを slug から引く。 */
-export async function tripIdBySlug(db: D1Database, slug: string): Promise<number> {
+/**
+ * 旧 trips の slug から、移行後の予約枠IDを引く。
+ * Phase 2 で trips は reservation_slots へ移行したため、返るのは枠のIDになる。
+ */
+export async function slotIdByLegacyTripSlug(
+  db: D1Database,
+  slug: string,
+): Promise<number> {
   const row = await db
-    .prepare(`SELECT id FROM trips WHERE slug = ?1`)
+    .prepare(
+      `SELECT s.id FROM reservation_slots s
+       JOIN trips t ON t.id = s.legacy_trip_id
+       WHERE t.slug = ?1`,
+    )
     .bind(slug)
     .first<{ id: number }>();
-  if (!row) throw new Error(`trip not found: ${slug}`);
+  if (!row) throw new Error(`slot not found for legacy trip: ${slug}`);
   return row.id;
 }
 
+/** 旧名。返す値は予約枠ID。 */
+export const tripIdBySlug = slotIdByLegacyTripSlug;
+
+/** 池袋便のページslug。 */
+export const RAKKO_PAGE_SLUG = 'rakko-ikebukuro';
+
 export const OUTBOUND_SLUG = 'ikebukuro-20260821-outbound';
 export const RETURN_SLUG = 'ikebukuro-20260822-return';
+
+/** 予約ページIDを slug から引く。 */
+export async function pageIdBySlug(db: D1Database, slug: string): Promise<number> {
+  const row = await db
+    .prepare(`SELECT id FROM reservation_pages WHERE slug = ?1`)
+    .bind(slug)
+    .first<{ id: number }>();
+  if (!row) throw new Error(`page not found: ${slug}`);
+  return row.id;
+}
+
+/** テスト用の予約ページを作る。 */
+export async function createTestPage(
+  db: D1Database,
+  overrides: Partial<{
+    slug: string;
+    title: string;
+    status: string;
+    pageType: string;
+    allowMulti: number;
+    maxSlots: number;
+  }> = {},
+): Promise<number> {
+  const now = '2026-08-01T00:00:00Z';
+  const slug = overrides.slug ?? `test-page-${Math.random().toString(36).slice(2, 8)}`;
+  await db
+    .prepare(
+      `INSERT INTO reservation_pages
+         (slug, title, description, status, page_type, allow_multi_slot_booking,
+          requires_line_login, max_slots_per_checkout, checkin_label, created_at, updated_at)
+       VALUES (?1, ?2, '', ?3, ?4, ?5, 1, ?6, '受付', ?7, ?7)`,
+    )
+    .bind(
+      slug,
+      overrides.title ?? 'テストイベント',
+      overrides.status ?? 'published',
+      overrides.pageType ?? 'event',
+      overrides.allowMulti ?? 1,
+      overrides.maxSlots ?? 4,
+      now,
+    )
+    .run();
+  return await pageIdBySlug(db, slug);
+}
+
+/** テスト用の予約枠を作る。 */
+export async function createTestSlot(
+  db: D1Database,
+  pageId: number,
+  overrides: Partial<{
+    name: string;
+    startAt: string;
+    endAt: string | null;
+    location: string | null;
+    origin: string | null;
+    destination: string | null;
+    capacity: number;
+    maxPartySize: number;
+    bookingOpenAt: string | null;
+    bookingCloseAt: string | null;
+    reminderAt: string | null;
+    bookingStatus: string;
+    sortOrder: number;
+  }> = {},
+): Promise<number> {
+  const now = '2026-08-01T00:00:00Z';
+  const result = await db
+    .prepare(
+      `INSERT INTO reservation_slots
+         (reservation_page_id, name, description, start_at, end_at, origin, destination,
+          location, capacity, max_party_size, booking_open_at, booking_close_at,
+          reminder_at, booking_status, sort_order, created_at, updated_at)
+       VALUES (?1, ?2, '', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)`,
+    )
+    .bind(
+      pageId,
+      overrides.name ?? '第1回',
+      overrides.startAt ?? '2026-09-01T04:00:00Z',
+      overrides.endAt ?? null,
+      overrides.origin ?? null,
+      overrides.destination ?? null,
+      overrides.location ?? '大広間',
+      overrides.capacity ?? 10,
+      overrides.maxPartySize ?? 4,
+      overrides.bookingOpenAt ?? null,
+      overrides.bookingCloseAt ?? null,
+      overrides.reminderAt ?? null,
+      overrides.bookingStatus ?? 'open',
+      overrides.sortOrder ?? 1,
+      now,
+    )
+    .run();
+  return Number(result.meta?.last_row_id ?? 0);
+}
 
 /** イベント前の基準時刻（UTC）。 */
 export const NOW = '2026-08-01T00:00:00Z';

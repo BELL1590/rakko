@@ -1,38 +1,66 @@
-import { esc, when } from '../lib/html';
-import { formatJstLong, formatJstTime } from '../lib/time';
-import { layout, splitPlace } from './layout';
-import { parseCompanionNames, type BookingWithTrip } from '../db/types';
-
 /**
  * 予約完了 / 予約詳細ページ。
  *
- * キャンセルは誤操作防止のため、詳細を再表示してから確定する2段階にする。
- * ルートもPOST先も変更しない（同一ページ内で確認セクションを開くだけ）。
- * JSが無効な場合は確認セクションが最初から開いた状態で、従来の confirm() が働く。
+ * 一括予約の完了時は、同じグループの予約をまとめて表示する。
+ * キャンセルは誤操作防止のため2段階（同一ページ内で確認セクションを開くだけで、
+ * ルートもPOST先も変えない）。JSが無効な場合は確認セクションが最初から開き、
+ * 従来の confirm() が働く。キャンセルは枠単位。
  */
+
+import { esc, when } from '../lib/html';
+import { formatJstLong } from '../lib/time';
+import { layout } from './layout';
+import { slotRoute, slotWhen } from './slot-parts';
+import { parseCompanionNames, type BookingWithSlot } from '../db/types';
+
+function summaryCard(booking: BookingWithSlot, isReturn: boolean): string {
+  const companions = parseCompanionNames(booking.companion_names_json);
+  const cancelled = booking.status === 'cancelled';
+
+  return `<section class="card trip-card${isReturn ? ' is-return' : ''}">
+  <div class="trip-card__head">
+    <span class="trip-card__dir">${esc(booking.slot_name)}</span>
+    <span class="trip-card__state">${cancelled ? 'キャンセル済み' : '予約済み'}</span>
+  </div>
+  <div class="trip-card__body">
+    ${slotWhen(booking)}
+    ${slotRoute(booking)}
+    <ul class="summary-list">
+      <li><span class="k">予約ID</span><span class="v">#${booking.id}</span></li>
+      <li><span class="k">予約ページ</span><span class="v">${esc(booking.page_title)}</span></li>
+      <li><span class="k">代表者</span><span class="v">${esc(booking.representative_name)}</span></li>
+      <li><span class="k">ご予約人数</span><span class="v">${booking.party_size}名</span></li>
+      ${when(
+        companions.length > 0,
+        `<li><span class="k">同行者</span><span class="v">${esc(companions.join('、'))}</span></li>`,
+      )}
+      <li><span class="k">ステータス</span><span class="v">${
+        cancelled
+          ? '<span class="badge badge-cancelled">キャンセル済み</span>'
+          : '<span class="badge badge-confirmed">予約済み</span>'
+      }</span></li>
+    </ul>
+  </div>
+</section>`;
+}
+
 export function bookingDetailPage(params: {
-  booking: BookingWithTrip;
+  booking: BookingWithSlot;
+  /** 一括予約の場合、同じグループの他の予約 */
+  groupBookings?: BookingWithSlot[];
   csrfToken: string;
   userName: string | null;
   justCompleted: boolean;
   notificationNote?: string | null;
+  nowUtc: string;
   alert?: { type: 'error' | 'success' | 'info'; message: string } | null;
 }): string {
   const { booking } = params;
-  const isReturn = booking.direction === 'return';
-  const label = isReturn ? '帰り' : '行き';
-  const companions = parseCompanionNames(booking.companion_names_json);
   const cancelled = booking.status === 'cancelled';
-  const departed = booking.depart_at <= new Date().toISOString();
-  const canCancel = !cancelled && !departed;
-
+  const started = booking.start_at <= params.nowUtc;
+  const canCancel = !cancelled && !started;
   const heading = params.justCompleted ? 'ご予約が完了しました' : 'ご予約の詳細';
-
-  const long = formatJstLong(booking.depart_at);
-  const time = formatJstTime(booking.depart_at);
-  const date = long.endsWith(time) ? long.slice(0, long.length - time.length) : long;
-  const from = splitPlace(booking.origin);
-  const to = splitPlace(booking.destination);
+  const others = (params.groupBookings ?? []).filter((entry) => entry.id !== booking.id);
 
   const cancelForm = `<form method="post" action="/bookings/${booking.id}/cancel" style="margin:0"
       id="cancel-form" onsubmit="return confirm('この予約をキャンセルします。よろしいですか？');">
@@ -49,15 +77,15 @@ export function bookingDetailPage(params: {
     <p class="cancel-lead">この予約をキャンセルしますか？</p>
     <ul class="summary-list" style="margin-bottom:12px">
       <li><span class="k">予約ID</span><span class="v">#${booking.id}</span></li>
-      <li><span class="k">日時</span><span class="v">${esc(long)}</span></li>
-      <li><span class="k">区間</span><span class="v">${esc(booking.origin)} → ${esc(booking.destination)}</span></li>
+      <li><span class="k">予約枠</span><span class="v">${esc(booking.page_title)}／${esc(booking.slot_name)}</span></li>
+      <li><span class="k">日時</span><span class="v">${esc(formatJstLong(booking.start_at))}</span></li>
       <li><span class="k">ご予約人数</span><span class="v">${booking.party_size}名</span></li>
-      ${when(
-        companions.length > 0,
-        `<li><span class="k">同行者</span><span class="v">${esc(companions.join('、'))}</span></li>`,
-      )}
     </ul>
-    <p class="muted" style="margin-top:0">キャンセルすると座席は他のお客様へ開放されます。取り消しはできません。再度ご乗車される場合は、あらためて予約が必要です。</p>
+    <p class="muted" style="margin-top:0">キャンセルすると座席は他のお客様へ開放されます。取り消しはできません。
+    ${when(
+      others.length > 0,
+      'まとめて予約した他の枠はキャンセルされません（枠ごとにお手続きください）。',
+    )}</p>
     <div class="btn-stack">
       <button class="btn btn-secondary" type="button" id="cancel-dismiss" hidden>やめる（予約を続ける）</button>
       ${cancelForm}
@@ -79,49 +107,14 @@ ${when(
 
 <h2>${heading}</h2>
 
-<section class="card trip-card${isReturn ? ' is-return' : ''}">
-  <div class="trip-card__head">
-    <span class="trip-card__dir">${label}</span>
-    <span class="trip-card__state">${
-      cancelled ? 'キャンセル済み' : '予約済み'
-    }</span>
-  </div>
-  <div class="trip-card__body">
-    <p class="trip-when">
-      <span class="trip-date">${esc(date)}</span>
-      <span class="trip-time">${esc(time)}</span>
-    </p>
-    <div class="route">
-      <span class="route__col from">
-        <span class="route__label">出発・集合</span>
-        <span class="route__place">${esc(from.main)}</span>
-        ${from.sub ? `<span class="route__sub">${esc(from.sub)}</span>` : ''}
-      </span>
-      <span class="route__arrow" aria-hidden="true">▶</span>
-      <span class="route__col to">
-        <span class="route__label">到着</span>
-        <span class="route__place">${esc(to.main)}</span>
-        ${to.sub ? `<span class="route__sub">${esc(to.sub)}</span>` : ''}
-      </span>
-    </div>
+${summaryCard(booking, false)}
 
-    <ul class="summary-list">
-      <li><span class="k">予約ID</span><span class="v">#${booking.id}</span></li>
-      <li><span class="k">乗車場所</span><span class="v">${esc(booking.origin)}</span></li>
-      <li><span class="k">代表者</span><span class="v">${esc(booking.representative_name)}</span></li>
-      <li><span class="k">ご予約人数</span><span class="v">${booking.party_size}名</span></li>
-      ${when(
-        companions.length > 0,
-        `<li><span class="k">同行者</span><span class="v">${esc(companions.join('、'))}</span></li>`,
-      )}
-      <li><span class="k">ステータス</span><span class="v">${
-        cancelled
-          ? '<span class="badge badge-cancelled">キャンセル済み</span>'
-          : '<span class="badge badge-confirmed">予約済み</span>'
-      }</span></li>
-    </ul>
-  </div>
-</section>
+${when(
+  others.length > 0,
+  `<h2>同時に予約した枠</h2>
+   ${others.map((entry) => summaryCard(entry, true)).join('\n')}
+   <p class="muted">キャンセルは枠ごとに、それぞれの詳細ページからお手続きいただけます。</p>`,
+)}
 
 ${when(
   Boolean(params.notificationNote),
@@ -130,7 +123,7 @@ ${when(
 
 <div class="btn-row" style="margin-bottom:16px">
   <a class="btn btn-secondary" href="/my-bookings">マイ予約へ</a>
-  <a class="btn btn-secondary" href="/">トップへ戻る</a>
+  <a class="btn btn-secondary" href="/reserve/${esc(booking.page_slug)}">予約ページへ</a>
 </div>
 
 ${cancelSection}
@@ -170,7 +163,7 @@ ${cancelSection}
 
   return layout(
     {
-      title: `${heading} | らっこ号 池袋便`,
+      title: `${heading} | ${booking.page_title}`,
       userName: params.userName,
       alert: params.alert ?? null,
       bodyEnd: script,

@@ -1,6 +1,9 @@
 /** D1 のテーブル行に対応する型。 */
 
 export type Direction = 'outbound' | 'return';
+export type PageStatus = 'draft' | 'published' | 'closed' | 'archived';
+export type PageType = 'bus' | 'event' | 'time_slot' | 'other';
+export type SlotBookingStatus = 'open' | 'closed' | 'hidden';
 export type BookingStatus = 'confirmed' | 'cancelled';
 export type BookingSource = 'line' | 'admin';
 export type TripBookingStatus = 'open' | 'closed';
@@ -44,9 +47,86 @@ export interface TripWithAvailability extends TripRow {
   is_bookable: boolean;
 }
 
+/** 予約ページ（イベント全体）。 */
+export interface ReservationPageRow {
+  id: number;
+  slug: string;
+  title: string;
+  description: string;
+  status: PageStatus;
+  page_type: PageType;
+  /** 0/1 */
+  allow_multi_slot_booking: number;
+  /** 0/1 */
+  requires_line_login: number;
+  max_slots_per_checkout: number;
+  /** 受付確認のUI文言（乗車 / 受付 / 来場 など） */
+  checkin_label: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 予約枠（利用者が実際に予約する1枠）。 */
+export interface ReservationSlotRow {
+  id: number;
+  reservation_page_id: number;
+  name: string;
+  description: string;
+  /** UTC ISO8601 */
+  start_at: string;
+  end_at: string | null;
+  origin: string | null;
+  destination: string | null;
+  location: string | null;
+  capacity: number;
+  max_party_size: number;
+  booking_open_at: string | null;
+  booking_close_at: string | null;
+  reminder_at: string | null;
+  booking_status: SlotBookingStatus;
+  sort_order: number;
+  legacy_trip_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 予約枠 + 集計済みの予約状況。 */
+export interface SlotWithAvailability extends ReservationSlotRow {
+  booked_seats: number;
+  remaining_seats: number;
+  is_full: boolean;
+  /** 受付中・満席でない・開始前・受付期間内 */
+  is_bookable: boolean;
+  /** 一覧に表示してよいか（hidden 以外） */
+  is_visible: boolean;
+}
+
+/** 予約枠 + 所属ページの情報。 */
+export interface SlotWithPage extends SlotWithAvailability {
+  page_slug: string;
+  page_title: string;
+  page_status: PageStatus;
+  page_type: PageType;
+  checkin_label: string;
+  max_slots_per_checkout: number;
+  allow_multi_slot_booking: number;
+  requires_line_login: number;
+}
+
+/** ページ + 集計。 */
+export interface PageWithStats extends ReservationPageRow {
+  slot_count: number;
+  booked_seats: number;
+  capacity_total: number;
+}
+
 export interface BookingRow {
   id: number;
-  trip_id: number;
+  reservation_slot_id: number;
+  /** 旧モデルの参照（段階移行のため保持） */
+  trip_id: number | null;
+  /** 同一ページの複数枠を一括予約したときのグループID */
+  booking_group_id: string | null;
   user_id: number | null;
   source: BookingSource;
   representative_name: string;
@@ -60,14 +140,23 @@ export interface BookingRow {
   updated_at: string;
 }
 
-/** 予約 + 便情報（画面表示用）。 */
-export interface BookingWithTrip extends BookingRow {
-  trip_slug: string;
-  direction: Direction;
-  origin: string;
-  destination: string;
-  depart_at: string;
-  reminder_at: string;
+/** 予約 + 予約枠・ページ情報（画面表示用）。 */
+export interface BookingWithSlot extends BookingRow {
+  slot_name: string;
+  slot_description: string;
+  start_at: string;
+  end_at: string | null;
+  origin: string | null;
+  destination: string | null;
+  location: string | null;
+  max_party_size: number;
+  reminder_at: string | null;
+  booking_close_at: string | null;
+  reservation_page_id: number;
+  page_slug: string;
+  page_title: string;
+  page_type: PageType;
+  checkin_label: string;
 }
 
 export interface NotificationRow {
@@ -85,15 +174,18 @@ export interface NotificationRow {
 /** リマインド送信対象の1件分。 */
 export interface ReminderTarget {
   booking_id: number;
-  trip_id: number;
+  reservation_slot_id: number;
   party_size: number;
   representative_name: string;
   line_user_id: string | null;
   is_line_friend: number | null;
-  direction: Direction;
-  origin: string;
-  destination: string;
-  depart_at: string;
+  slot_name: string;
+  origin: string | null;
+  destination: string | null;
+  location: string | null;
+  start_at: string;
+  page_title: string;
+  page_type: PageType;
 }
 
 export function parseCompanionNames(json: string): string[] {

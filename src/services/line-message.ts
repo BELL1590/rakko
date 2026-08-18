@@ -1,9 +1,10 @@
 /**
  * LINE Messaging API（push message）クライアントと、通知本文の組み立て。
+ * 予約ページ種別（バス / イベント / 時間枠）に依存しすぎない汎用の文面にする。
  */
 
 import { formatJstLong, formatJstTime } from '../lib/time';
-import type { Direction } from '../db/types';
+import type { PageType } from '../db/types';
 
 const PUSH_ENDPOINT = 'https://api.line.me/v2/bot/message/push';
 
@@ -63,53 +64,76 @@ export async function pushTextMessage(params: {
   }
 }
 
-export interface TripMessageContext {
-  direction: Direction;
-  origin: string;
-  destination: string;
-  depart_at: string;
+export interface SlotMessageContext {
+  name: string;
+  start_at: string;
+  origin: string | null;
+  destination: string | null;
+  location: string | null;
 }
 
-export function directionLabel(direction: Direction): string {
-  return direction === 'outbound' ? '行き' : '帰り';
+function pageIcon(pageType: PageType): string {
+  return pageType === 'bus' ? '🚌' : '🔔';
 }
 
-/** 予約完了通知の本文。 */
-export function buildBookingConfirmationText(
-  trip: TripMessageContext,
-  partySize: number,
-): string {
-  return [
-    '🚌 らっこ号 池袋便',
+/** 「池袋西口 → 草加健康センター」または「会場：〇〇」の1行。 */
+export function routeLine(slot: SlotMessageContext): string {
+  if (slot.origin && slot.destination) return `${slot.origin} → ${slot.destination}`;
+  if (slot.location) return `会場：${slot.location}`;
+  if (slot.origin) return `集合：${slot.origin}`;
+  return '';
+}
+
+/**
+ * 予約完了通知の本文。
+ * 一括予約のときは1通に全枠をまとめる。
+ */
+export function buildBookingConfirmationText(params: {
+  pageTitle: string;
+  pageType: PageType;
+  items: { slot: SlotMessageContext; partySize: number }[];
+}): string {
+  const lines: string[] = [
+    `${pageIcon(params.pageType)} ${params.pageTitle}`,
     '予約が完了しました。',
-    '',
-    `【${directionLabel(trip.direction)}】`,
-    `${formatJstLong(trip.depart_at)}`,
-    `${trip.origin} → ${trip.destination}`,
-    '',
-    `予約人数：${partySize}名`,
-    '',
-    '予約内容は下記ページから確認できます。',
-  ].join('\n');
+  ];
+
+  for (const item of params.items) {
+    const route = routeLine(item.slot);
+    lines.push('');
+    lines.push(`【${item.slot.name}】`);
+    lines.push(formatJstLong(item.slot.start_at));
+    if (route) lines.push(route);
+    lines.push(`予約人数：${item.partySize}名`);
+  }
+
+  lines.push('');
+  lines.push('予約内容は下記ページから確認できます。');
+  return lines.join('\n');
 }
 
-/** 乗車前リマインドの本文。 */
-export function buildReminderText(trip: TripMessageContext, partySize: number): string {
-  const time = formatJstTime(trip.depart_at);
-  if (trip.direction === 'outbound') {
-    return [
-      '🚌 らっこ号 池袋便のお知らせ',
-      `本日${time} ${trip.origin}出発です。`,
-      '出発15分前までに集合場所へお越しください。',
-      '',
-      `予約人数：${partySize}名`,
-    ].join('\n');
+/** 開始前リマインドの本文。 */
+export function buildReminderText(params: {
+  pageTitle: string;
+  pageType: PageType;
+  slot: SlotMessageContext;
+  partySize: number;
+}): string {
+  const time = formatJstTime(params.slot.start_at);
+  const lines: string[] = [
+    `${pageIcon(params.pageType)} ${params.pageTitle}「${params.slot.name}」のお知らせ`,
+  ];
+
+  if (params.slot.origin) {
+    lines.push(`本日${time} ${params.slot.origin}出発です。`);
+    lines.push('出発15分前までに集合場所へお越しください。');
+  } else {
+    lines.push(`本日${time} 開始です。`);
+    if (params.slot.location) lines.push(`会場：${params.slot.location}`);
+    lines.push('お時間に余裕をもってお越しください。');
   }
-  return [
-    '🚌 らっこ号 帰り便のお知らせ',
-    `本日${time} ${trip.origin}出発です。`,
-    'お乗り遅れのないようご注意ください。',
-    '',
-    `予約人数：${partySize}名`,
-  ].join('\n');
+
+  lines.push('');
+  lines.push(`予約人数：${params.partySize}名`);
+  return lines.join('\n');
 }

@@ -15,7 +15,8 @@ export function layout(options: LayoutOptions, content: string): string {
   const headerClass = options.admin ? 'site-header admin-header' : 'site-header';
   const wrapClass = options.admin ? 'wrap admin-wrap' : 'wrap';
   const homeHref = options.admin ? '/admin' : '/';
-  const brand = options.admin ? 'らっこ号 管理画面' : '🚌 らっこ号 池袋便';
+  // Phase 2 で汎用化したため、ヘッダーは特定イベント名を出さない
+  const brand = options.admin ? '予約管理' : '🛁 草加健康センター 予約';
 
   return `<!DOCTYPE html>
 <html lang="ja">
@@ -54,8 +55,8 @@ ${
 ${content}
 </main>
 <footer class="site-footer">
-  <p>草加健康センター「らっこ号 池袋便」予約システム</p>
-  <p class="muted" style="color:#b9b0a2">運行当日の連絡・変更は草加健康センターまでお問い合わせください。</p>
+  <p>草加健康センター オンライン予約</p>
+  <p class="muted" style="color:#b9b0a2">当日の連絡・変更は草加健康センターまでお問い合わせください。</p>
 </footer>
 ${options.bodyEnd ?? ''}
 </body>

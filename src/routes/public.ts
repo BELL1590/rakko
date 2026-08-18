@@ -2,9 +2,9 @@
 
 import { Hono } from 'hono';
 import type { AppEnv } from '../env';
-import { listTrips, getUserById } from '../db/queries';
+import { listPublishedPages, listSlotsByPage, getUserById } from '../db/queries';
 import { getUserSession } from '../services/session';
-import { homePage } from '../views/home';
+import { homePage, type HomePageEntry } from '../views/home';
 import { APP_CSS } from '../styles/app.css';
 import { alertFromCode } from '../lib/messages';
 import { nowUtc } from '../lib/time';
@@ -19,13 +19,21 @@ publicRoutes.get('/assets/app.css', (c) => {
 });
 
 publicRoutes.get('/', async (c) => {
-  const trips = await listTrips(c.env.DB, nowUtc());
+  const now = nowUtc();
+  const pages = await listPublishedPages(c.env.DB);
+
+  const entries: HomePageEntry[] = [];
+  for (const page of pages) {
+    const slots = await listSlotsByPage(c.env.DB, page.id, now);
+    entries.push({ page, slots: slots.filter((slot) => slot.is_visible) });
+  }
+
   const session = await getUserSession(c);
   const user = session ? await getUserById(c.env.DB, session.uid) : null;
 
   return c.html(
     homePage({
-      trips,
+      entries,
       userName: user?.line_display_name ?? null,
       alert: alertFromCode(c.req.query('msg')),
     }),
