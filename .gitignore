@@ -7,3 +7,5 @@ dist/
 *.log
 .DS_Store
 coverage/
+# XSERVER版のローカル設定（秘密情報を含む）
+xserver/config/config.local.php
