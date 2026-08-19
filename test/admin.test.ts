@@ -381,3 +381,137 @@ describe('旧URLの互換', () => {
     expect(response.headers.get('location')).toBe(`/admin/slots/${slotId}`);
   });
 });
+
+describe('ダッシュボードの枠状態表示', () => {
+  /** 管理ダッシュボードの「予約ページ別の状況」から 枠名 → 状態バッジ を取り出す。 */
+  function adminStates(html: string): Record<string, string> {
+    const map: Record<string, string> = {};
+    const re = /<h3 style="margin:0">([^<]*)<\/h3>\s*<span><span class="badge [^"]*">([^<]*)</g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) map[m[1] as string] = m[2] as string;
+    return map;
+  }
+
+  /** 公開予約ページから 枠名 → 状態ラベル を取り出す。 */
+  function publicStates(html: string): Record<string, string> {
+    const map: Record<string, string> = {};
+    const re = /trip-card__dir">([^<]*)<\/span>\s*<span class="trip-card__state">([^<]*)</g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) map[m[1] as string] = m[2] as string;
+    return map;
+  }
+
+  /** 実時刻で描画されるため、境界は十分に離した値を使う。 */
+  const PAST = '2020-01-01T00:00:00Z';
+  const FUTURE = '2099-01-01T00:00:00Z';
+  const START = '2099-06-01T00:00:00Z';
+
+  async function seedStates(): Promise<number> {
+    const pageId = await createTestPage(db.d1, { slug: 'states', title: '状態テスト' });
+
+    await createTestSlot(db.d1, pageId, {
+      name: '受付中の枠',
+      startAt: START,
+      capacity: 10,
+      bookingStatus: 'open',
+      sortOrder: 1,
+    });
+    // booking_status は open のまま、締切だけ過ぎている枠
+    await createTestSlot(db.d1, pageId, {
+      name: '締切経過の枠',
+      startAt: START,
+      capacity: 10,
+      bookingStatus: 'open',
+      bookingCloseAt: PAST,
+      sortOrder: 2,
+    });
+    await createTestSlot(db.d1, pageId, {
+      name: '受付前の枠',
+      startAt: START,
+      capacity: 10,
+      bookingStatus: 'open',
+      bookingOpenAt: FUTURE,
+      sortOrder: 3,
+    });
+    const fullSlot = await createTestSlot(db.d1, pageId, {
+      name: '満席の枠',
+      startAt: START,
+      capacity: 1,
+      bookingStatus: 'open',
+      sortOrder: 4,
+    });
+    await createTestSlot(db.d1, pageId, {
+      name: '停止中の枠',
+      startAt: START,
+      capacity: 10,
+      bookingStatus: 'closed',
+      sortOrder: 5,
+    });
+
+    const userId = await createTestUser(db.d1, 'FULL');
+    const booked = await createGroupBooking(db.d1, {
+      pageId,
+      userId,
+      source: 'line',
+      representativeName: '満席 太郎',
+      phone: '09011112222',
+      agreed: true,
+      items: [{ slotId: fullSlot, partySize: 1, companionNames: [] }],
+    });
+    if (!booked.ok) throw new Error(`setup failed: ${booked.code}`);
+
+    return pageId;
+  }
+
+  it('booking_status=open でも booking_close_at を過ぎた枠は「受付終了」と表示する', async () => {
+    await seedStates();
+    const states = adminStates(await (await client.get('/admin')).text());
+    expect(states['締切経過の枠']).toBe('受付終了');
+  });
+
+  it('booking_open_at が未来の枠は「受付開始前」と表示する', async () => {
+    await seedStates();
+    const states = adminStates(await (await client.get('/admin')).text());
+    expect(states['受付前の枠']).toBe('受付開始前');
+  });
+
+  it('満席の枠は「満席」と表示する', async () => {
+    await seedStates();
+    const states = adminStates(await (await client.get('/admin')).text());
+    expect(states['満席の枠']).toBe('満席');
+  });
+
+  it('booking_status=closed の枠は「受付停止中」と表示する', async () => {
+    await seedStates();
+    const states = adminStates(await (await client.get('/admin')).text());
+    expect(states['停止中の枠']).toBe('受付停止中');
+  });
+
+  it('受付中の枠は「受付中」と表示する', async () => {
+    await seedStates();
+    const states = adminStates(await (await client.get('/admin')).text());
+    expect(states['受付中の枠']).toBe('受付中');
+  });
+
+  it('公開側と管理側の状態表示が完全に一致する', async () => {
+    await seedStates();
+    const admin = adminStates(await (await client.get('/admin')).text());
+
+    // 公開ページはログイン不要で状態ラベルを描画する
+    const visitor = new TestClient(testEnv({ DB: db.d1 }));
+    const publicLabels = publicStates(await (await visitor.get('/reserve/states')).text());
+
+    for (const name of [
+      '受付中の枠',
+      '締切経過の枠',
+      '受付前の枠',
+      '満席の枠',
+      '停止中の枠',
+    ]) {
+      expect(publicLabels[name]).toBe(admin[name]);
+    }
+    expect(new Set(Object.values(admin))).toEqual(
+      new Set(['受付中', '受付終了', '受付開始前', '満席', '受付停止中']),
+    );
+  });
+});

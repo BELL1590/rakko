@@ -75,10 +75,31 @@ export function splitPlace(place: string): { main: string; sub: string } {
   return { main: match[1], sub: match[2] };
 }
 
+/** 「残りわずか」のしきい値。定員6名の貸切枠を常に満席直前扱いしないよう割合でも見る。 */
+export function fewSeatsThreshold(capacity?: number | null): number {
+  if (!capacity || capacity <= 0) return 6;
+  return Math.min(6, Math.max(1, Math.ceil(capacity * 0.25)));
+}
+
+/**
+ * 残席が「わずか」か。
+ * 公開側のバッジと管理側のアラートで必ずこれを使う（判定を二重に書かない）。
+ */
+export function isFewSeats(slot: {
+  remaining_seats: number;
+  capacity?: number | null;
+}): boolean {
+  return slot.remaining_seats > 0 && slot.remaining_seats <= fewSeatsThreshold(slot.capacity);
+}
+
 /** 残席の表示区分。色だけに頼らず文字でも状態を示す。 */
-export function seatBadge(trip: { is_full: boolean; remaining_seats: number }): string {
+export function seatBadge(trip: {
+  is_full: boolean;
+  remaining_seats: number;
+  capacity?: number;
+}): string {
   if (trip.is_full) return '<span class="seat-badge is-full">満席</span>';
-  if (trip.remaining_seats <= 6) return '<span class="seat-badge is-few">残りわずか</span>';
+  if (isFewSeats(trip)) return '<span class="seat-badge is-few">残りわずか</span>';
   return '<span class="seat-badge is-open">空席あり</span>';
 }
 

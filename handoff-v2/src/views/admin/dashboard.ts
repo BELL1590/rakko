@@ -11,7 +11,6 @@
 import { esc, when } from '../../lib/html';
 import { formatJstIsoLike, formatJstLong, formatJstTime } from '../../lib/time';
 import { isFewSeats, layout } from '../layout';
-import { slotState, slotStateLabel } from '../slot-parts';
 import type { PageWithStats, SlotWithAvailability } from '../../db/types';
 
 export function adminLoginPage(params: {
@@ -52,28 +51,6 @@ interface FlatSlot {
 /** JSTの日付部分（YYYY-MM-DD）。 */
 function jstDate(iso: string): string {
   return formatJstIsoLike(iso).slice(0, 10);
-}
-
-/** 状態バッジの配色。状態の判定そのものは slotState() に任せる。 */
-const STATE_BADGE_CLASS: Record<ReturnType<typeof slotState>, string> = {
-  open: 'badge-open',
-  before_open: 'badge-proxy',
-  closed_time: 'badge-closed',
-  suspended: 'badge-closed',
-  full: 'badge-full',
-};
-
-/**
- * 予約枠の状態バッジ。
- * 公開側（slot-parts.ts）と同じ slotState() / slotStateLabel() を使い、
- * 受付中 / 受付開始前 / 受付終了 / 受付停止中 / 満席 の表示を一致させる。
- */
-function slotStateBadge(
-  slot: SlotWithAvailability,
-  nowUtc: string,
-): string {
-  const cls = STATE_BADGE_CLASS[slotState(slot, nowUtc)];
-  return `<span class="badge ${cls}">${esc(slotStateLabel(slot, nowUtc))}</span>`;
 }
 
 /**
@@ -186,9 +163,13 @@ export function adminDashboardPage(params: {
           return `<article class="card admin-card">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
     <h3 style="margin:0">${esc(slot.name)}</h3>
-    <span>${slotStateBadge(slot, nowUtc)}${
-      slot.booking_status === 'hidden' ? ' <span class="badge badge-proxy">非表示</span>' : ''
-    }</span>
+    <span>${
+      slot.booking_status === 'open'
+        ? '<span class="badge badge-open">受付中</span>'
+        : slot.booking_status === 'hidden'
+          ? '<span class="badge badge-proxy">非表示</span>'
+          : '<span class="badge badge-closed">受付停止</span>'
+    }${slot.is_full ? ' <span class="badge badge-full">満席</span>' : ''}</span>
   </div>
   <p class="muted" style="margin:6px 0 0">${esc(formatJstLong(slot.start_at))}</p>
   <p class="stat">${slot.booked_seats} <small>/ ${slot.capacity}名</small></p>

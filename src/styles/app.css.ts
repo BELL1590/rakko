@@ -6,7 +6,9 @@
  * ただし可読性最優先、モバイルファースト（360〜430px）、タップ領域44px以上。
  * 行き / 帰りは「文字・矢印・地名」で区別し、色は補助にとどめる。
  */
-export const APP_CSS = `
+
+import { UI_V2_CSS } from './ui-v2.css';
+const BASE_CSS = `
 :root {
   --red: #d0121b;
   --red-dark: #a30d15;
@@ -493,3 +495,6 @@ code {
   background: var(--cream-deep); border-radius: 4px; padding: 1px 5px; font-size: 0.86em;
 }
 `;
+
+/** Phase 2F の追加スタイル。既存クラスの削除・改名はしていない。 */
+export const APP_CSS = BASE_CSS + UI_V2_CSS;
