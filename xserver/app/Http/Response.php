@@ -4,14 +4,20 @@ declare(strict_types=1);
 
 namespace App\Http;
 
-/** レスポンス。テストから中身を検証できるよう値オブジェクトにしている。 */
+/**
+ * レスポンス。テストから中身を検証できるよう値オブジェクトにしている。
+ *
+ * PHP 8.0 互換のため `readonly` を外している（8.1で追加された機能）。
+ * これらのプロパティはコンストラクタでのみ設定し、以後書き換えない約束で扱う。
+ * 型宣言は残しているため、誤った型の代入は 8.0 でも TypeError になる。
+ */
 final class Response
 {
     /** @param array<string, string> $headers */
     public function __construct(
-        public readonly int $status = 200,
-        public readonly string $body = '',
-        public readonly array $headers = []
+        public int $status = 200,
+        public string $body = '',
+        public array $headers = []
     ) {
     }
 

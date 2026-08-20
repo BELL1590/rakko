@@ -12,7 +12,7 @@ use App\Support\Config;
  */
 final class AdminAuth
 {
-    public function __construct(private readonly Config $config)
+    public function __construct(private Config $config)
     {
     }
 

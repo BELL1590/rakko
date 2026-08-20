@@ -22,12 +22,12 @@ use App\Views\ReserveView;
 final class BookingController
 {
     public function __construct(
-        private readonly SlotRepository $slots,
-        private readonly BookingRepository $bookings,
-        private readonly UserRepository $users,
-        private readonly BookingService $booking,
-        private readonly ReminderService $reminders,
-        private readonly Session $session,
+        private SlotRepository $slots,
+        private BookingRepository $bookings,
+        private UserRepository $users,
+        private BookingService $booking,
+        private ReminderService $reminders,
+        private Session $session,
     ) {
     }
 

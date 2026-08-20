@@ -23,7 +23,7 @@ final class NotificationRepository
      */
     public const STALE_SENDING_SECONDS = 600;
 
-    public function __construct(private readonly Db $db)
+    public function __construct(private Db $db)
     {
     }
 

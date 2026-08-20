@@ -24,8 +24,8 @@ final class LineMessenger
     public const RETRY_KEY_TTL_SECONDS = 23 * 60 * 60;
 
     public function __construct(
-        private readonly Config $config,
-        private readonly HttpClient $http
+        private Config $config,
+        private HttpClient $http
     ) {
     }
 

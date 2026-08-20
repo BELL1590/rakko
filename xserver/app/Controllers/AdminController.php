@@ -30,14 +30,14 @@ final class AdminController
     private const BOOKING_STATUSES = ['open', 'closed', 'hidden'];
 
     public function __construct(
-        private readonly Config $config,
-        private readonly SlotRepository $slots,
-        private readonly BookingRepository $bookings,
-        private readonly NotificationRepository $notifications,
-        private readonly BookingService $booking,
-        private readonly ReminderService $reminders,
-        private readonly Session $session,
-        private readonly AdminAuth $auth,
+        private Config $config,
+        private SlotRepository $slots,
+        private BookingRepository $bookings,
+        private NotificationRepository $notifications,
+        private BookingService $booking,
+        private ReminderService $reminders,
+        private Session $session,
+        private AdminAuth $auth,
     ) {
     }
 

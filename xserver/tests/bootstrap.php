@@ -58,7 +58,17 @@ function describe(string $name, callable $body): void
     TestStats::$suite = $previous;
 }
 
-function fail(string $message): never
+/**
+ * アサーション失敗。必ず例外を投げるので呼び出し元へは戻らない。
+ *
+ * PHP 8.0 には `never` 戻り値型が無い（8.1で追加）。
+ * 8.0 では `: never` は「クラス never を返す」と解釈され、
+ * 常に throw するため偶然動いてしまうだけなので、型は書かずに
+ * 静的解析向けの `@return never` で意図を示す。
+ *
+ * @return never
+ */
+function fail(string $message)
 {
     throw new \AssertionError($message);
 }

@@ -20,10 +20,10 @@ use App\Views\LoginView;
 final class AuthController
 {
     public function __construct(
-        private readonly Config $config,
-        private readonly Session $session,
-        private readonly UserRepository $users,
-        private readonly ?LineLogin $line,
+        private Config $config,
+        private Session $session,
+        private UserRepository $users,
+        private ?LineLogin $line,
     ) {
     }
 

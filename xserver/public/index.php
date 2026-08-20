@@ -15,6 +15,18 @@ use App\Http\Response;
 use App\Support\ConfigError;
 
 $root = dirname(__DIR__);
+
+// ビルトインサーバー（php -S ... public/index.php）は全リクエストをこのファイルへ渡すため、
+// /assets/* のような実ファイルを自分で返す必要がある。
+// 本番の Apache では .htaccess が実ファイルを先に配信するので、この分岐は通らない。
+if (PHP_SAPI === 'cli-server') {
+    $requested = parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
+    $file = is_string($requested) ? __DIR__ . '/' . ltrim($requested, '/') : '';
+    if ($file !== '' && is_file($file) && !str_ends_with($file, '.php')) {
+        return false;
+    }
+}
+
 require_once $root . '/app/bootstrap.php';
 
 // セキュリティヘッダ（Workers版 secureHeaders 相当）

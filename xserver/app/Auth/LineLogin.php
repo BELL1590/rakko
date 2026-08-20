@@ -25,8 +25,8 @@ final class LineLogin
     private const FRIENDSHIP_ENDPOINT = 'https://api.line.me/friendship/v1/status';
 
     public function __construct(
-        private readonly Config $config,
-        private readonly HttpClient $http
+        private Config $config,
+        private HttpClient $http
     ) {
     }
 

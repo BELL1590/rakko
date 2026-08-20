@@ -24,7 +24,7 @@ final class BookingRepository
         JOIN reservation_slots s ON s.id = b.reservation_slot_id
         JOIN reservation_pages p ON p.id = s.reservation_page_id ';
 
-    public function __construct(private readonly Db $db)
+    public function __construct(private Db $db)
     {
     }
 

@@ -10,7 +10,7 @@ use App\Support\Time;
 /** LINEユーザーの保存・参照。 */
 final class UserRepository
 {
-    public function __construct(private readonly Db $db)
+    public function __construct(private Db $db)
     {
     }
 
