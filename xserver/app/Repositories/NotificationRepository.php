@@ -39,8 +39,9 @@ final class NotificationRepository
      * `line_retry_key` は一度発行したら保持し続ける
      * （同じ通知の再送だと LINE 側に伝えるため。COALESCE で上書きしない）。
      *
-     * @return array{token: string, retry_key: string}|null
-     *         送信権を取れたら claim_token と LINE retry key、取れなければ null
+     * @return array{token: string, retry_key: string, attempt: int, first_attempt_at: string}|null
+     *         送信権を取れたら claim_token・LINE retry key・試行回数・初回試行時刻、
+     *         取れなければ null
      */
     public function claim(int $bookingId, string $type, int $maxAttempts, ?string $now = null): ?array
     {
@@ -76,10 +77,10 @@ final class NotificationRepository
             return null;
         }
 
-        // 実際に保存されている retry key を読み直す
-        // （初回は今生成したもの、再試行時は最初に発行したもの）
+        // 実際に保存されている値を読み直す
+        // （retry key は初回なら今生成したもの、再試行時は最初に発行したもの）
         $row = $this->db->first(
-            'SELECT line_retry_key FROM notifications
+            'SELECT line_retry_key, attempt_count, created_at FROM notifications
               WHERE booking_id = ? AND notification_type = ? AND claim_token = ?',
             [$bookingId, $type, $token]
         );
@@ -87,6 +88,10 @@ final class NotificationRepository
         return [
             'token' => $token,
             'retry_key' => is_string($row['line_retry_key'] ?? null) ? $row['line_retry_key'] : $newRetryKey,
+            'attempt' => (int) ($row['attempt_count'] ?? 1),
+            // 行の作成＝1回目のclaim（＝初回送信試行）と同一のリクエスト内。
+            // retry key の有効期限判定の基準に使う。
+            'first_attempt_at' => (string) ($row['created_at'] ?? $now),
         ];
     }
 

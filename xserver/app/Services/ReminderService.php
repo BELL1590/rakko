@@ -77,6 +77,20 @@ final class ReminderService
             return 'skipped';
         }
 
+        // LINE側の retry key 管理期間（24時間）を過ぎると、同じキーで送っても
+        // 重複と判定されず2通目として配信される。ここまで届かなかった通知を
+        // 無理に送り直すより、二重配信を避けて確定させるほうが害が小さい。
+        if (self::retryKeyExpired($claimed, $now)) {
+            $finishAll(
+                'skipped',
+                sprintf(
+                    'LINE retry key expired (>%dh since first attempt); not resent to avoid duplicate delivery',
+                    intdiv(LineMessenger::RETRY_KEY_TTL_SECONDS, 3600)
+                )
+            );
+            return 'skipped';
+        }
+
         $result = $this->messenger->push(
             $lineUserId,
             $buildText(array_keys($claimed)),
@@ -96,6 +110,40 @@ final class ReminderService
     }
 
     /**
+     * retry key が LINE 側の管理期間を過ぎていないか。
+     *
+     * 判定の基準は「初回送信試行からの経過時間」。
+     * まだ1回も送っていない通知（attempt が1＝これが初回）は対象外で、
+     * 再送のときだけ期限を見る。
+     * 1件でも期限切れが混じっていれば、まとめ送信全体を送らない。
+     *
+     * @param array<int, array{token: string, retry_key: string, attempt: int, first_attempt_at: string}> $claimed
+     */
+    private static function retryKeyExpired(array $claimed, string $now): bool
+    {
+        $nowAt = Time::parseUtc($now);
+        if ($nowAt === null) {
+            return false;
+        }
+
+        foreach ($claimed as $claim) {
+            if ($claim['attempt'] <= 1) {
+                // 初回送信。retry key はまだLINEに登録されていない
+                continue;
+            }
+            $firstAt = Time::parseUtc($claim['first_attempt_at']);
+            if ($firstAt === null) {
+                continue;
+            }
+            if ($nowAt->getTimestamp() - $firstAt->getTimestamp() > LineMessenger::RETRY_KEY_TTL_SECONDS) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * 1回のpushリクエストに付ける X-Line-Retry-Key を決める。
      *
      * 通知1件ならその通知のキーをそのまま使う。
@@ -103,7 +151,7 @@ final class ReminderService
      * こうすると「同じ顔ぶれの再送＝同じキー（LINEが重複排除する）」
      * 「顔ぶれが変わった＝本文も変わるので別キー（届く）」が両立する。
      *
-     * @param array<int, array{token: string, retry_key: string}> $claimed
+     * @param array<int, array{token: string, retry_key: string, attempt: int, first_attempt_at: string}> $claimed
      */
     private static function requestRetryKey(array $claimed): string
     {

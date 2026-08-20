@@ -16,6 +16,7 @@ declare(strict_types=1);
 use App\Database\Connection;
 use App\Database\Db;
 use App\Repositories\NotificationRepository;
+use App\Services\LineMessenger;
 use App\Services\ReminderService;
 use App\Support\Config;
 use App\Support\Uuid;
@@ -509,12 +510,145 @@ describe('LINE retry key（ネットワーク境界の二重送信防止）', fu
         assertTrue(Uuid::isValid(Uuid::derive([$a, $b])), 'UUID形式であること');
     });
 
-    test('不正な形式の retry key はヘッダに載せない', function (): void {
+    test('不正な retry key では HTTP リクエスト自体を送らない', function (): void {
         $http = new FakeHttpClient(200, '{}');
         resetRequestState();
         $app = makeApp([], $http);
 
-        $app->messenger->push('U-x', '本文', 'not-a-uuid');
-        assertSame([null], retryKeysOf($http), 'LINEに400で弾かれる値は送らないこと');
+        foreach (['not-a-uuid', '', 'ZZZZZZZZ-1111-2222-3333-444444444444', Uuid::v4() . 'x'] as $bad) {
+            $result = $app->messenger->push('U-x', '本文', $bad);
+
+            assertFalse($result['ok'], '"' . $bad . '" は送信前に失敗すること');
+            assertFalse($result['retryable'], '実装バグなので再試行しない');
+            assertContains('invalid X-Line-Retry-Key', $result['error']);
+        }
+
+        assertSame(0, count($http->calls), 'Messaging API を一度も呼ばないこと');
+    });
+
+    test('23時間以内の再試行では同じ retry key で送り直す', function () use ($prepare): void {
+        $http = new FakeHttpClient();
+        $http->responses = [
+            ['status' => 500, 'body' => 'server error'],
+            ['status' => 200, 'body' => '{}'],
+        ];
+        [$app, $bookingId] = $prepare($http);
+
+        // 1回目（初回送信）
+        assertSame('failed', $app->reminders->sendBookingConfirmation([$bookingId], '2099-08-20 00:00:00'));
+
+        // 22時間後に再試行 → まだLINE側の管理期間内なので同じキーで送る
+        assertSame('requested', $app->reminders->sendBookingConfirmation([$bookingId], '2099-08-20 22:00:00'));
+
+        $keys = retryKeysOf($http);
+        assertSame(2, count($keys), '2回pushしていること');
+        assertSame(1, count(array_unique($keys)), '同じ retry key を再利用すること');
+        assertSame('requested', $app->notifications->find($bookingId, 'booking_confirmation')['status']);
+    });
+
+    test('24時間を過ぎたら自動再送せず skipped で確定する', function () use ($prepare): void {
+        $http = new FakeHttpClient();
+        $http->responses = [
+            ['status' => 500, 'body' => 'server error'],
+            ['status' => 200, 'body' => '{}'],
+        ];
+        [$app, $bookingId] = $prepare($http);
+
+        assertSame('failed', $app->reminders->sendBookingConfirmation([$bookingId], '2099-08-20 00:00:00'));
+        assertSame(1, count(retryKeysOf($http)), '初回は送っていること');
+
+        // 25時間後。LINE側の retry key 管理期間（24h）を過ぎている
+        assertSame(
+            'skipped',
+            $app->reminders->sendBookingConfirmation([$bookingId], '2099-08-21 01:00:00'),
+            '二重配信を避けて確定させること'
+        );
+
+        assertSame(1, count(retryKeysOf($http)), '2回目のpushを送っていないこと');
+
+        $row = $app->notifications->find($bookingId, 'booking_confirmation');
+        assertSame('skipped', $row['status']);
+        assertContains('retry key expired', (string) $row['last_error'], '理由が記録されること');
+
+        // 確定済みなので、以降のCronが拾って送り直すこともない
+        assertNull($app->notifications->claim($bookingId, 'booking_confirmation', ReminderService::MAX_ATTEMPTS));
+    });
+
+    test('境界: 23時間ちょうどは送り、それを超えたら送らない', function () use ($prepare): void {
+        $ttlHours = intdiv(LineMessenger::RETRY_KEY_TTL_SECONDS, 3600);
+        assertSame(23, $ttlHours, '安全マージン込みで23時間であること');
+
+        // ちょうど23時間後 → まだ送る
+        $inTime = new FakeHttpClient();
+        $inTime->responses = [
+            ['status' => 500, 'body' => 'server error'],
+            ['status' => 200, 'body' => '{}'],
+        ];
+        [$appA, $bookingA] = $prepare($inTime);
+        assertSame('failed', $appA->reminders->sendBookingConfirmation([$bookingA], '2099-08-20 00:00:00'));
+        assertSame('requested', $appA->reminders->sendBookingConfirmation([$bookingA], '2099-08-20 23:00:00'));
+        assertSame(2, count(retryKeysOf($inTime)));
+
+        // 23時間 + 1秒 → 送らない
+        $tooLate = new FakeHttpClient();
+        $tooLate->responses = [
+            ['status' => 500, 'body' => 'server error'],
+            ['status' => 200, 'body' => '{}'],
+        ];
+        [$appB, $bookingB] = $prepare($tooLate);
+        assertSame('failed', $appB->reminders->sendBookingConfirmation([$bookingB], '2099-08-20 00:00:00'));
+        assertSame('skipped', $appB->reminders->sendBookingConfirmation([$bookingB], '2099-08-20 23:00:01'));
+        assertSame(1, count(retryKeysOf($tooLate)));
+    });
+
+    test('初回送信は行が古くても期限切れ扱いにしない', function () use ($prepare): void {
+        $http = new FakeHttpClient(200, '{}');
+        [$app, $bookingId] = $prepare($http);
+
+        // INSERT だけ済んで送信されないまま長時間経った状況を作る
+        // （まだ1回も送っていないので、retry key はLINEに登録されていない）
+        $app->db->run(
+            'INSERT INTO notifications
+               (booking_id, notification_type, status, attempt_count, line_retry_key, created_at, updated_at)
+             VALUES (?, ?, \'pending\', 0, ?, ?, ?)',
+            [$bookingId, 'reminder', Uuid::v4(), '2099-08-20 00:00:00', '2099-08-20 00:00:00']
+        );
+
+        $outcome = $app->reminders->dispatch(
+            [$bookingId],
+            'reminder',
+            'U-retry-001',
+            static fn (): string => '本文',
+            '2099-08-25 00:00:00'
+        );
+
+        assertSame('requested', $outcome, '未送信の通知は期限切れにしないこと');
+        assertSame(1, count(retryKeysOf($http)));
+    });
+
+    test('stale再取得の再送も24時間の期限に従う', function () use ($prepare): void {
+        $http = new FakeHttpClient(200, '{}');
+        [$app, $bookingId] = $prepare($http);
+
+        // 1回目の送信でLINEは受理したが、finish 前に落ちた（sending のまま）
+        $claim = $app->notifications->claim(
+            $bookingId,
+            'booking_confirmation',
+            ReminderService::MAX_ATTEMPTS,
+            '2099-08-20 00:00:00'
+        );
+        assertNotNull($claim);
+        $app->db->run(
+            'UPDATE notifications SET updated_at = ? WHERE booking_id = ? AND notification_type = ?',
+            ['2099-08-20 00:00:00', $bookingId, 'booking_confirmation']
+        );
+
+        // 26時間後に stale 再取得 → 期限切れなので送り直さない
+        assertSame(
+            'skipped',
+            $app->reminders->sendBookingConfirmation([$bookingId], '2099-08-21 02:00:00')
+        );
+        assertSame(0, count(retryKeysOf($http)), 'pushしていないこと');
+        assertSame('skipped', $app->notifications->find($bookingId, 'booking_confirmation')['status']);
     });
 });

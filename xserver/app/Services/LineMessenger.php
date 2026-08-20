@@ -16,6 +16,13 @@ final class LineMessenger
 {
     private const PUSH_ENDPOINT = 'https://api.line.me/v2/bot/message/push';
 
+    /**
+     * LINE Platform が retry key を保持する期間は24時間。
+     * それを過ぎると同じキーでも重複と判定されず、そのまま2通目として配信される。
+     * 判定の境目ぎりぎりを攻めても得るものが無いため、1時間の安全マージンを引く。
+     */
+    public const RETRY_KEY_TTL_SECONDS = 23 * 60 * 60;
+
     public function __construct(
         private readonly Config $config,
         private readonly HttpClient $http
@@ -28,24 +35,34 @@ final class LineMessenger
      * 注意: HTTP 200 は「LINEプラットフォームが受け付けた」だけであり、
      * ユーザーへ届いたことの保証ではない。呼び出し側は requested として記録する。
      *
-     * $retryKey（X-Line-Retry-Key）は初回送信から必ず付ける。
+     * $retryKey（X-Line-Retry-Key）は必須。初回送信から必ず付ける。
      * LINEが受理した直後にこちらのプロセスが落ちてDBへ requested を書けなくても、
      * 同じキーで再送すればLINE側が重複と判定して 409 を返すため、
      * ネットワーク境界を越えて二重配信を防げる。
      *
-     * @param string|null $retryKey UUID形式。null なら付けない（未設定時の後方互換）
+     * キーが不正な形式なら、ヘッダ無しで送る（＝重複防止が効かない状態で送る）
+     * のではなく、Messaging API を呼ぶ前に失敗させる。
+     *
+     * @param string $retryKey UUID形式
      * @return array{ok: true, deduplicated: bool}|array{ok: false, retryable: bool, error: string}
      */
-    public function push(string $to, string $text, ?string $retryKey = null): array
+    public function push(string $to, string $text, string $retryKey): array
     {
+        if (!Uuid::isValid($retryKey)) {
+            // 二重配信のリスクを負ってまで送る理由が無いので、ここで打ち切る。
+            // 再試行しても直らない実装バグなので retryable=false。
+            return [
+                'ok' => false,
+                'retryable' => false,
+                'error' => 'invalid X-Line-Retry-Key (must be a UUID); push was not sent',
+            ];
+        }
+
         $headers = [
             'Content-Type' => 'application/json',
             'Authorization' => 'Bearer ' . $this->config->str('LINE_MESSAGING_CHANNEL_ACCESS_TOKEN'),
+            'X-Line-Retry-Key' => $retryKey,
         ];
-        // 不正な形式のキーはLINEに400で弾かれるため、送る前に検査する
-        if ($retryKey !== null && Uuid::isValid($retryKey)) {
-            $headers['X-Line-Retry-Key'] = $retryKey;
-        }
 
         $response = $this->http->post(
             self::PUSH_ENDPOINT,
