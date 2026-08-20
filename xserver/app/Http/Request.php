@@ -4,7 +4,13 @@ declare(strict_types=1);
 
 namespace App\Http;
 
-/** リクエストの薄いラッパ。スーパーグローバルへの直接アクセスをここへ閉じ込める。 */
+/**
+ * リクエストの薄いラッパ。スーパーグローバルへの直接アクセスをここへ閉じ込める。
+ *
+ * PHP 8.0 互換のため `readonly` を外している（8.1で追加された機能）。
+ * これらのプロパティはコンストラクタでのみ設定し、以後書き換えない約束で扱う。
+ * 型宣言は残しているため、誤った型の代入は 8.0 でも TypeError になる。
+ */
 final class Request
 {
     /**
@@ -13,11 +19,11 @@ final class Request
      * @param array<string, list<string>> $repeated 同名スカラーの繰り返し（slot_selected など）
      */
     public function __construct(
-        public readonly string $method,
-        public readonly string $path,
-        private readonly array $query = [],
-        private readonly array $post = [],
-        private readonly array $repeated = []
+        public string $method,
+        public string $path,
+        private array $query = [],
+        private array $post = [],
+        private array $repeated = []
     ) {
     }
 

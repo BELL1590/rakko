@@ -37,9 +37,9 @@ final class BookingService
     private const PHONE_PATTERN = '/^[0-9+\-() ]{10,20}$/';
 
     public function __construct(
-        private readonly Db $db,
-        private readonly SlotRepository $slots,
-        private readonly BookingRepository $bookings
+        private Db $db,
+        private SlotRepository $slots,
+        private BookingRepository $bookings
     ) {
     }
 

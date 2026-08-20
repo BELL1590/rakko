@@ -1,7 +1,7 @@
 # 草加健康センター 予約システム — XSERVER（PHP + MySQL）版
 
 Cloudflare Workers 版（リポジトリ直下の `src/`）と**同じURL・同じ画面・同じ予約仕様**を、
-XSERVER のレンタルサーバー（Apache + PHP 8.4 + MySQL）で動かすための実装です。
+XSERVER のレンタルサーバー（Apache + PHP 8.0 + MySQL）で動かすための実装です。
 
 Workers 版は削除していません。両方が並存し、どちらを本番にするかは運用側で選べます。
 
@@ -79,11 +79,34 @@ CSS と クライアントJS は Workers 版の `src/styles/*.ts` / `src/views/*
 
 | 項目 | 値 |
 |---|---|
-| PHP | 8.4（`declare(strict_types=1)` / 列挙的 match / readonly promoted properties を使用） |
+| PHP | **8.0.30**（本番 `yunoizumi.com` の稼働バージョン）。`declare(strict_types=1)` / `match` / コンストラクタプロモーション / nullsafe演算子 / `str_contains` など 8.0 の機能のみを使用 |
 | 必須拡張 | `pdo_mysql`, `curl`, `mbstring`, `json`, `openssl` |
 | MySQL | 5.7 以上（XSERVER の MySQL / MariaDB 10.5+ で動作。`CHECK` 制約と生成列を使用） |
 | Web サーバー | Apache + `mod_rewrite`（`.htaccess` 同梱） |
 | Composer | **不要**（自前オートローダ） |
+
+### PHP 8.0 で書くときの制約
+
+本番 `yunoizumi.com` は既存サイトが PHP 8.0.30 で稼働しており、
+PHPバージョンを変更しません。以下は **8.1以降専用のため使えません**。
+
+| 機能 | 追加バージョン | 代替 |
+|---|---|---|
+| `readonly` プロパティ | 8.1 | 型付きプロパティ＋「コンストラクタでのみ設定する」規約 |
+| `never` 戻り値型 | 8.1 | 型を書かず `@return never` で意図を示す |
+| `enum` | 8.1 | クラス定数（本実装では未使用） |
+| 第一級callable `foo(...)` | 8.1 | `[$obj, 'method']` / `Closure::fromCallable()` |
+| 初期化子での `new` | 8.1 | コンストラクタ本体で生成 |
+| 交差型 `A&B` | 8.1 | インターフェースを1つに絞る |
+| `array_is_list()` | 8.1 | `array_keys($a) === range(0, count($a) - 1)` |
+| readonly クラス / DNF型 | 8.2 | — |
+| 型付きクラス定数 / `json_validate()` | 8.3 | — |
+| プロパティフック / 非対称可視性 | 8.4 | — |
+
+逆に、**8.0 で使える機能はそのまま使っています**（`match` 式、コンストラクタ
+プロモーション、nullsafe 演算子 `?->`、`str_contains()` / `str_starts_with()`、
+名前付き引数、`$object::class`、捕捉なし `catch`、`mixed` 型）。
+不要にレガシーな書き方へ落とすことはしていません。
 
 ---
 
@@ -223,23 +246,25 @@ retry key についても、初回付与・5xx／タイムアウト／stale再�
 
 ## 5. ローカルでの実行
 
+本番と同じ **PHP 8.0** で動かしてください（8.1以降でしか動かない書き方が混ざるのを防ぐため）。
+
 ```bash
 cd xserver
 cp config/config.example.php config/config.local.php
 # config.local.php の DB_* と SESSION_SECRET を埋める
 
-php bin/migrate.php            # スキーマ適用
-php bin/migrate.php --status   # 未適用の確認
+php8.0 bin/migrate.php            # スキーマ適用
+php8.0 bin/migrate.php --status   # 未適用の確認
 
-php -S localhost:8787 -t public public/index.php
+php8.0 -S localhost:8787 -t public public/index.php
 ```
 
 ### テスト
 
 ```bash
 cd xserver
-RAKKO_DB_NAME=rakko_test RAKKO_DB_USER=... RAKKO_DB_PASSWORD=... php tests/run.php
-php tests/run.php Booking      # ファイル名で絞り込み
+RAKKO_DB_NAME=rakko_test RAKKO_DB_USER=... RAKKO_DB_PASSWORD=... php8.0 tests/run.php
+php8.0 tests/run.php Booking      # ファイル名で絞り込み
 ```
 
 テスト用DBは**中身が消えます**。本番DBを指さないでください。
@@ -248,8 +273,11 @@ php tests/run.php Booking      # ファイル名で絞り込み
 構文チェック:
 
 ```bash
-find app bin public tests -name '*.php' -print0 | xargs -0 -n1 php -l
+find app bin public tests -name '*.php' -print0 | xargs -0 -n1 php8.0 -l
 ```
+
+`php -l` は本番と同じ **PHP 8.0** で実行してください。
+8.4 で通っても 8.0 で構文エラーになる書き方（`readonly` など）があります。
 
 ---
 
@@ -259,7 +287,8 @@ find app bin public tests -name '*.php' -print0 | xargs -0 -n1 php -l
 
 ### 6-1. PHP バージョン
 
-サーバーパネル →「PHP Ver.切替」→ 対象ドメインを **PHP 8.4** に設定。
+対象ドメインは既存サイトが **PHP 8.0.30** で稼働しているため、**PHP Ver.は変更しません**。
+「PHP Ver.切替」で 8.0 系であることだけを確認してください。
 `php.ini設定` で `mbstring` / `curl` / `pdo_mysql` が有効なことを確認します。
 
 ### 6-2. MySQL データベース
@@ -270,24 +299,42 @@ find app bin public tests -name '*.php' -print0 | xargs -0 -n1 php -l
 2. 「MySQLユーザ追加」でユーザーを作成し、上のDBに**アクセス権を付与**
 3. 「MySQL一覧」に表示される **ホスト名**（`mysqlXXXX.xserver.jp` 形式）を控える
 
-### 6-3. ファイル配置
+### 6-3. ファイル配置（既存サイトと同居させる）
 
-アプリ本体をドキュメントルートの外に置きます（`config.local.php` の直接ダウンロードを防ぐため）。
+`yunoizumi.com` には既存のWebサイトが稼働しています。
+**既存サイトのファイルには一切触れません。**
+予約システムは専用のサブドメインを追加し、そのドキュメントルートに配置します。
+
+> サブディレクトリ（`yunoizumi.com/reserve-system/`）ではなく**サブドメイン**を使ってください。
+> 本システムは `/`・`/reserve/{slug}`・`/admin` などのパスを前提にしており、
+> サブディレクトリに置くとURLが変わってしまいます。
+
+1. サーバーパネル →「サブドメイン設定」→ 例 `reserve.yunoizumi.com` を追加
+2. 作成された `/home/<account>/reserve.yunoizumi.com/public_html/` が新しいドキュメントルート
+
+アプリ本体はそのドキュメントルートの外に置きます
+（`config.local.php` の直接ダウンロードを防ぐため）。
 
 ```
-/home/<account>/<domain>/
+/home/<account>/reserve.yunoizumi.com/
 ├── app-root/            ← ドキュメントルート外
 │   ├── app/  bin/  config/  database/  tests/
-└── public_html/         ← ドキュメントルート
+└── public_html/         ← ドキュメントルート（このサブドメイン専用）
     ├── .htaccess
     ├── index.php
     └── assets/
+
+/home/<account>/yunoizumi.com/public_html/   ← 既存サイト。触らない
 ```
 
 `xserver/public/` の中身を `public_html/` へ、それ以外を `app-root/` へ配置します。
 `public/index.php` は `dirname(__DIR__)` を参照するため、
 `public_html` と `app-root` を並べる構成では index.php 冒頭の `$root` を
-`/home/<account>/<domain>/app-root` に書き換えてください（1行）。
+`/home/<account>/reserve.yunoizumi.com/app-root` に書き換えてください（1行）。
+
+同梱の `.htaccess` はこのサブドメインのドキュメントルートにのみ置かれるため、
+既存サイトの `.htaccess` やリライト設定には影響しません。
+PHPバージョンもアカウント全体で 8.0.30 のまま変更しないので、既存サイトの動作は変わりません。
 
 ### 6-4. 設定ファイル
 
@@ -295,7 +342,7 @@ find app bin public tests -name '*.php' -print0 | xargs -0 -n1 php -l
 
 | キー | 内容 |
 |---|---|
-| `APP_URL` | `https://reserve.example.com`（末尾スラッシュなし） |
+| `APP_URL` | `https://reserve.yunoizumi.com`（末尾スラッシュなし） |
 | `APP_ENV` | `production` |
 | `SESSION_SECRET` | `openssl rand -base64 48` などで生成した**32文字以上**の値 |
 | `DB_HOST` | `mysqlXXXX.xserver.jp` |
@@ -318,7 +365,7 @@ find app bin public tests -name '*.php' -print0 | xargs -0 -n1 php -l
 SSH（または「PHP」→ CLI が使える環境）で:
 
 ```bash
-/usr/bin/php8.4 /home/<account>/<domain>/app-root/bin/migrate.php
+/usr/bin/php8.0 /home/<account>/<domain>/app-root/bin/migrate.php
 ```
 
 `0002_seed_rakko.sql` は「らっこ号 池袋便」の初期データを入れます。
@@ -332,7 +379,7 @@ SSH（または「PHP」→ CLI が使える環境）で:
 |---|---|
 | 分 | `0,5,10,15,20,25,30,35,40,45,50,55` |
 | 時 / 日 / 月 / 曜日 | すべて `*` |
-| コマンド | `/usr/bin/php8.4 /home/<account>/<domain>/app-root/bin/cron-reminders.php` |
+| コマンド | `/usr/bin/php8.0 /home/<account>/<domain>/app-root/bin/cron-reminders.php` |
 
 XSERVER の Cron は実行結果をメール通知します。不要なら末尾に `> /dev/null 2>&1` を付けてください。
 このスクリプトは CLI 以外から実行すると 403 で終了します。
@@ -361,7 +408,7 @@ XSERVER の Cron は実行結果をメール通知します。不要なら末尾
 
 | 項目 | Workers 版 | XSERVER 版 |
 |---|---|---|
-| 実行環境 | Cloudflare Workers（V8） | Apache + PHP 8.4（mod_php / CGI） |
+| 実行環境 | Cloudflare Workers（V8） | Apache + PHP 8.0.30（mod_php / CGI） |
 | ルーティング | Hono | `app/Http/Router.php` + `.htaccess` |
 | DB | D1（SQLite） | MySQL / InnoDB（PDO） |
 | 同時実行 | 単一ライターで直列化 | **トランザクション + `SELECT ... FOR UPDATE`** |

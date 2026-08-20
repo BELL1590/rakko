@@ -13,7 +13,7 @@ use App\Support\Time;
  */
 final class SlotRepository
 {
-    public function __construct(private readonly Db $db)
+    public function __construct(private Db $db)
     {
     }
 

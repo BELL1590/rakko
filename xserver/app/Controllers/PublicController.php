@@ -18,9 +18,9 @@ use App\Views\Layout;
 final class PublicController
 {
     public function __construct(
-        private readonly SlotRepository $slots,
-        private readonly UserRepository $users,
-        private readonly Session $session,
+        private SlotRepository $slots,
+        private UserRepository $users,
+        private Session $session,
     ) {
     }
 

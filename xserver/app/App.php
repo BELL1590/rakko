@@ -33,25 +33,29 @@ use App\Support\ConfigError;
  * URLは Cloudflare Workers 版（src/index.ts + src/routes/*.ts）と1対1で対応させる。
  * public/index.php と tests/ の両方がここを通るため、
  * 「テストで通った経路」と「本番で動く経路」が同一になる。
+ *
+ * PHP 8.0 互換のため `readonly` を外している（8.1で追加された機能）。
+ * これらのプロパティはコンストラクタでのみ設定し、以後書き換えない約束で扱う。
+ * 型宣言は残しているため、誤った型の代入は 8.0 でも TypeError になる。
  */
 final class App
 {
-    public readonly SlotRepository $slots;
-    public readonly BookingRepository $bookings;
-    public readonly UserRepository $users;
-    public readonly NotificationRepository $notifications;
-    public readonly BookingService $booking;
-    public readonly ReminderService $reminders;
-    public readonly LineMessenger $messenger;
-    public readonly Session $session;
-    public readonly AdminAuth $adminAuth;
-    public readonly ?LineLogin $lineLogin;
+    public SlotRepository $slots;
+    public BookingRepository $bookings;
+    public UserRepository $users;
+    public NotificationRepository $notifications;
+    public BookingService $booking;
+    public ReminderService $reminders;
+    public LineMessenger $messenger;
+    public Session $session;
+    public AdminAuth $adminAuth;
+    public ?LineLogin $lineLogin;
 
-    private readonly Router $router;
+    private Router $router;
 
     public function __construct(
-        public readonly Config $config,
-        public readonly Db $db,
+        public Config $config,
+        public Db $db,
         ?HttpClient $http = null,
     ) {
         $http ??= new CurlHttpClient();

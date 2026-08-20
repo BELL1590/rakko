@@ -10,8 +10,8 @@ use App\Support\Time;
 final class Migrator
 {
     public function __construct(
-        private readonly Db $db,
-        private readonly string $migrationsDir
+        private Db $db,
+        private string $migrationsDir
     ) {
     }
 

@@ -15,7 +15,7 @@ final class Connection
 {
     private ?\PDO $pdo = null;
 
-    public function __construct(private readonly Config $config)
+    public function __construct(private Config $config)
     {
     }
 

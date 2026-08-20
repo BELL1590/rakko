@@ -25,11 +25,11 @@ final class ReminderService
     public const MAX_ATTEMPTS = 3;
 
     public function __construct(
-        private readonly Config $config,
-        private readonly BookingRepository $bookings,
-        private readonly NotificationRepository $notifications,
-        private readonly UserRepository $users,
-        private readonly LineMessenger $messenger
+        private Config $config,
+        private BookingRepository $bookings,
+        private NotificationRepository $notifications,
+        private UserRepository $users,
+        private LineMessenger $messenger
     ) {
     }
 

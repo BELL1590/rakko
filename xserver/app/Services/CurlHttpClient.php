@@ -7,7 +7,7 @@ namespace App\Services;
 /** 本番用のcURL実装。 */
 final class CurlHttpClient implements HttpClient
 {
-    public function __construct(private readonly int $timeoutSeconds = 10)
+    public function __construct(private int $timeoutSeconds = 10)
     {
     }
 

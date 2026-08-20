@@ -28,7 +28,7 @@ final class Session
     /** @var array<string, string> 送出予定のCookie（テストから検証できるよう保持） */
     private array $queued = [];
 
-    public function __construct(private readonly Config $config)
+    public function __construct(private Config $config)
     {
     }
 
