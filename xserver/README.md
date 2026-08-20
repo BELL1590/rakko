@@ -59,7 +59,8 @@ xserver/
 │   └── config.example.php      # これをコピーして config.local.php を作る
 ├── database/migrations/
 │   ├── 0001_initial.sql
-│   └── 0002_seed_rakko.sql
+│   ├── 0002_seed_rakko.sql
+│   └── 0003_notification_sending_state.sql
 ├── public/                     # ← ここだけをドキュメントルートにする
 │   ├── .htaccess
 │   ├── index.php               # フロントコントローラ
@@ -123,6 +124,37 @@ CONSTRAINT ck_slots_reserved CHECK (reserved_seats <= capacity)
 `reserved_seats` は予約・キャンセルと同じトランザクションで増減します。
 アプリのバグや手作業のUPDATEで定員を超えようとしても、DBが拒否します。
 
+### 通知の二重送信の防止
+
+`notifications` は `UNIQUE(booking_id, notification_type)` で1予約1通知に限定したうえで、
+**送信権を `sending` 状態への原子的な遷移で1プロセスに絞ります**。
+
+```
+pending / failed        -> sending    （claim。勝った1プロセスだけが送信する）
+sending                 -> requested / failed / skipped
+                                      （finish。claim_token が一致する場合のみ）
+sending が長時間放置     -> sending    （送信中に落ちたプロセスの後始末）
+```
+
+`claim()` は次の単一UPDATEで送信権を取ります。MySQL はUPDATEで行ロックを取ったあとに
+WHERE句を再評価するため、同時に走った2つ目のUPDATEは `sending` になった行に一致せず0行になります。
+
+```sql
+UPDATE notifications
+   SET status = 'sending', claim_token = ?, attempt_count = attempt_count + 1, updated_at = ?
+ WHERE booking_id = ? AND notification_type = ?
+   AND attempt_count < ?
+   AND (status IN ('pending','failed') OR (status = 'sending' AND updated_at < ?))
+```
+
+更新できたプロセスだけが `claim_token` を受け取り、Messaging API を呼びます。
+`finish()` はその token が一致する場合のみ状態を遷移させるため、
+送信中に落ちたプロセスが後から目を覚まして `finish()` しても、
+その間に別プロセスが再取得した送信権を壊しません。
+
+放置された `sending` は `NotificationRepository::STALE_SENDING_SECONDS`（600秒）を過ぎると
+再試行の対象に戻ります。push の HTTP タイムアウト（10秒）より十分に長くとってあります。
+
 ---
 
 ## 4. 一括予約の原子性とオーバーブッキング防止
@@ -145,6 +177,10 @@ MySQL は複数接続が本当に並行するため、この行ロックが必�
 検証は `tests/ConcurrencyTest.php` で行っています。
 定員10の枠へ **8プロセスが同時に2名ずつ**予約を投げ、
 成功が5件・`FULL` が3件・確定席数がちょうど10であることを確認しています。
+
+通知側の排他は `tests/NotificationConcurrencyTest.php` で、
+同じ予約・同じ種別へ **8プロセスが同時に claim** し、
+送信権を取れるのが1プロセスだけ・Messaging API 相当処理がちょうど1回であることを確認しています。
 
 ---
 
@@ -297,8 +333,9 @@ XSERVER の Cron は実行結果をメール通知します。不要なら末尾
 | 定期実行 | Cron Trigger（5分毎） | XSERVER Cron（5分毎・CLI） |
 | 静的アセット | Worker が文字列を返す | `public/assets/` を Apache が配信 |
 | 秘密情報 | `wrangler secret` | `config/config.local.php`（ドキュメントルート外） |
+| 通知の排他 | 単一ライターで直列化 | `sending` 状態 + `claim_token` への原子的遷移 |
 | セッション | 署名付きCookie（HMAC-SHA256） | 同左（PHPネイティブセッションは使わない） |
-| テスト | Vitest（120件） | 同梱ランナー（133件） |
+| テスト | Vitest（120件） | 同梱ランナー（147件） |
 
 ### 移植にあたっての実装上の注意
 
@@ -309,3 +346,6 @@ XSERVER の Cron は実行結果をメール通知します。不要なら末尾
   `BookingService::validateItem()` が trim/filter するため、バックエンドは変更していません。
 - **タイムゾーン**: 接続時に `SET time_zone = '+00:00'` を発行し、
   サーバーのタイムゾーン設定に依存しないようにしています。
+- **セッションの期限**: 署名付きCookieは署名だけでは無期限に有効なため、
+  `userId()` / `adminUser()` が発行時刻 `iat` を検証し、
+  利用者30日・管理者8時間を過ぎたものを無効扱いにします。

@@ -9,10 +9,19 @@ use App\Support\Time;
 
 /**
  * 通知ログ。
- * UNIQUE(booking_id, notification_type) により二重送信をDB制約で防ぐ。
+ * UNIQUE(booking_id, notification_type) により1予約1通知に限定し、
+ * さらに `sending` 状態への原子的な遷移で同時送信を1プロセスに絞る。
  */
 final class NotificationRepository
 {
+    /**
+     * `sending` のまま放置された通知を再取得できるようになるまでの秒数。
+     * 送信中にプロセスが落ちると `sending` で残るため、
+     * これを過ぎたものは「落ちた」とみなして再試行の対象に戻す。
+     * push の HTTP タイムアウト（10秒）より十分に長くとる。
+     */
+    public const STALE_SENDING_SECONDS = 600;
+
     public function __construct(private readonly Db $db)
     {
     }
@@ -20,11 +29,18 @@ final class NotificationRepository
     /**
      * 通知の送信権を確保する。
      *
-     * @return bool true なら送信してよい（このリクエストが権利を取った）
+     * `pending` / `failed`（および放置された `sending`）から `sending` への
+     * 遷移を単一のUPDATEで行い、実際に行を更新できたプロセスだけが送信する。
+     * MySQL はUPDATEで行ロックを取ったあとにWHERE句を再評価するため、
+     * 同時に走った2つ目のUPDATEは `sending` になった行に一致せず 0 行となる。
+     *
+     * @return string|null 送信権を取れたら claim_token、取れなければ null
      */
-    public function claim(int $bookingId, string $type, int $maxAttempts, ?string $now = null): bool
+    public function claim(int $bookingId, string $type, int $maxAttempts, ?string $now = null): ?string
     {
         $now ??= Time::nowUtc();
+        $staleBefore = $this->staleCutoff($now);
+        $token = bin2hex(random_bytes(16));
 
         // 既にあれば無視される（UNIQUE制約）
         $this->db->run(
@@ -36,19 +52,31 @@ final class NotificationRepository
 
         $changed = $this->db->run(
             'UPDATE notifications
-                SET attempt_count = attempt_count + 1, updated_at = ?
+                SET status = \'sending\',
+                    claim_token = ?,
+                    attempt_count = attempt_count + 1,
+                    updated_at = ?
               WHERE booking_id = ? AND notification_type = ?
-                AND status IN (\'pending\', \'failed\')
-                AND attempt_count < ?',
-            [$now, $bookingId, $type, $maxAttempts]
+                AND attempt_count < ?
+                AND (status IN (\'pending\', \'failed\')
+                     OR (status = \'sending\' AND updated_at < ?))',
+            [$token, $now, $bookingId, $type, $maxAttempts, $staleBefore]
         );
 
-        return $changed > 0;
+        return $changed > 0 ? $token : null;
     }
 
+    /**
+     * 送信結果を確定する。
+     * `sending` かつ claim_token が一致する場合だけ遷移させ、
+     * 送信権を持たないプロセスが状態を書き換えられないようにする。
+     * （放置された sending を別プロセスが再取得したあと、
+     *   元のプロセスが目を覚まして finish しても無視される）
+     */
     public function finish(
         int $bookingId,
         string $type,
+        string $token,
         string $status,
         ?string $lastError,
         ?string $now = null
@@ -57,12 +85,23 @@ final class NotificationRepository
         $this->db->run(
             'UPDATE notifications
                 SET status = ?,
+                    claim_token = NULL,
                     last_error = ?,
                     requested_at = CASE WHEN ? = \'requested\' THEN ? ELSE requested_at END,
                     updated_at = ?
-              WHERE booking_id = ? AND notification_type = ?',
-            [$status, $lastError, $status, $now, $now, $bookingId, $type]
+              WHERE booking_id = ? AND notification_type = ?
+                AND status = \'sending\'
+                AND claim_token = ?',
+            [$status, $lastError, $status, $now, $now, $bookingId, $type, $token]
         );
+    }
+
+    /** `sending` を「落ちた」とみなす境界時刻。 */
+    private function staleCutoff(string $now): string
+    {
+        $parsed = Time::parseUtc($now);
+        $base = $parsed?->getTimestamp() ?? time();
+        return gmdate('Y-m-d H:i:s', $base - self::STALE_SENDING_SECONDS);
     }
 
     /** @return array<string, mixed>|null */
@@ -92,6 +131,8 @@ final class NotificationRepository
      * - 開始前（開始済みの枠には送らない）
      * - confirmed の予約のみ
      * - 未送信、または failed かつ試行回数が上限未満
+     * - 送信中（sending）は対象外。ただし長時間放置されたものは
+     *   プロセスが落ちたとみなして再度対象にする
      *
      * @return list<array<string, mixed>>
      */
@@ -112,9 +153,12 @@ final class NotificationRepository
                 AND s.reminder_at IS NOT NULL
                 AND s.reminder_at <= ?
                 AND s.start_at > ?
-                AND (n.id IS NULL OR (n.status = \'failed\' AND n.attempt_count < ?))
+                AND (n.id IS NULL
+                     OR (n.attempt_count < ?
+                         AND (n.status IN (\'pending\', \'failed\')
+                              OR (n.status = \'sending\' AND n.updated_at < ?))))
               ORDER BY b.id ASC',
-            [$now, $now, $maxAttempts]
+            [$now, $now, $maxAttempts, $this->staleCutoff($now)]
         );
     }
 }

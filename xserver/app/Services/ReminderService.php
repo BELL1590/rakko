@@ -49,10 +49,12 @@ final class ReminderService
     ): string {
         $now ??= Time::nowUtc();
 
+        // 送信権を取れた予約だけを対象にする（token を持つ＝このプロセスが送る）
         $claimed = [];
         foreach ($bookingIds as $bookingId) {
-            if ($this->notifications->claim($bookingId, $type, self::MAX_ATTEMPTS, $now)) {
-                $claimed[] = $bookingId;
+            $token = $this->notifications->claim($bookingId, $type, self::MAX_ATTEMPTS, $now);
+            if ($token !== null) {
+                $claimed[$bookingId] = $token;
             }
         }
         if ($claimed === []) {
@@ -60,8 +62,8 @@ final class ReminderService
         }
 
         $finishAll = function (string $status, ?string $error) use ($claimed, $type, $now): void {
-            foreach ($claimed as $bookingId) {
-                $this->notifications->finish($bookingId, $type, $status, $error, $now);
+            foreach ($claimed as $bookingId => $token) {
+                $this->notifications->finish($bookingId, $type, $token, $status, $error, $now);
             }
         };
 
@@ -74,7 +76,7 @@ final class ReminderService
             return 'skipped';
         }
 
-        $result = $this->messenger->push($lineUserId, $buildText($claimed));
+        $result = $this->messenger->push($lineUserId, $buildText(array_keys($claimed)));
 
         if ($result['ok'] === true) {
             $finishAll('requested', null);

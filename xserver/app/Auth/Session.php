@@ -21,8 +21,8 @@ final class Session
     public const OAUTH_COOKIE = 'rk_oauth';
     public const CSRF_COOKIE = 'rk_csrf';
 
-    private const USER_MAX_AGE = 60 * 60 * 24 * 30; // 30日
-    private const ADMIN_MAX_AGE = 60 * 60 * 8;      // 8時間
+    public const USER_MAX_AGE = 60 * 60 * 24 * 30; // 30日
+    public const ADMIN_MAX_AGE = 60 * 60 * 8;      // 8時間
     private const OAUTH_MAX_AGE = 60 * 10;          // 10分
 
     /** @var array<string, string> 送出予定のCookie（テストから検証できるよう保持） */
@@ -160,6 +160,14 @@ final class Session
     {
         $session = $this->verify($this->readCookie(self::USER_COOKIE));
         if ($session === null || !isset($session['uid']) || !is_int($session['uid'])) {
+            return null;
+        }
+        // 署名は無期限に有効なので、発行時刻を見て自前で期限を切る。
+        // これが無いと、盗まれたCookieが30日経っても使えてしまう。
+        if (!isset($session['iat']) || !is_int($session['iat'])) {
+            return null;
+        }
+        if (time() - $session['iat'] > self::USER_MAX_AGE) {
             return null;
         }
         return $session['uid'];

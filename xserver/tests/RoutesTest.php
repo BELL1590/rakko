@@ -328,6 +328,76 @@ describe('セッションとCSRF', function (): void {
         assertFalse($app->session->verifyCsrf(''));
     });
 
+    test('期限内のセッションCookieは有効', function (): void {
+        resetRequestState();
+        $app = makeApp();
+        $userId = Fixtures::user($app);
+
+        $app->session->startUserSession($userId);
+        assertSame($userId, $app->session->userId());
+
+        // 発行から29日後でもまだ有効
+        $_COOKIE[App\Auth\Session::USER_COOKIE] = $app->session->sign([
+            'uid' => $userId,
+            'iat' => time() - (App\Auth\Session::USER_MAX_AGE - 86400),
+        ]);
+        assertSame($userId, $app->session->userId());
+    });
+
+    test('USER_MAX_AGE（30日）を過ぎた署名済みCookieは無効', function (): void {
+        resetRequestState();
+        $app = makeApp();
+        $userId = Fixtures::user($app);
+
+        // 署名は正しいが発行から30日を超えている
+        $_COOKIE[App\Auth\Session::USER_COOKIE] = $app->session->sign([
+            'uid' => $userId,
+            'iat' => time() - (App\Auth\Session::USER_MAX_AGE + 60),
+        ]);
+
+        assertNull($app->session->userId(), '期限切れは無効扱いにすること');
+    });
+
+    test('iat の無い署名済みCookieは無効', function (): void {
+        resetRequestState();
+        $app = makeApp();
+
+        // 署名は正しいが発行時刻が入っていない（期限を判定できない）
+        $_COOKIE[App\Auth\Session::USER_COOKIE] = $app->session->sign(['uid' => 1]);
+        assertNull($app->session->userId());
+
+        $_COOKIE[App\Auth\Session::USER_COOKIE] = $app->session->sign(['uid' => 1, 'iat' => 'いつか']);
+        assertNull($app->session->userId(), 'iat が数値でなければ無効');
+    });
+
+    test('期限切れセッションではマイ予約がログインへ誘導される', function (): void {
+        resetRequestState();
+        $app = makeApp();
+        $userId = Fixtures::user($app);
+        $_COOKIE[App\Auth\Session::USER_COOKIE] = $app->session->sign([
+            'uid' => $userId,
+            'iat' => time() - (App\Auth\Session::USER_MAX_AGE + 60),
+        ]);
+
+        $response = request($app, 'GET', '/my-bookings');
+        assertSame(303, $response->status);
+        assertContains('/login', $response->headers['Location']);
+    });
+
+    test('管理者セッションは8時間で期限切れになる', function (): void {
+        resetRequestState();
+        $app = makeApp();
+
+        $app->session->startAdminSession('admin');
+        assertSame('admin', $app->session->adminUser());
+
+        $_COOKIE[App\Auth\Session::ADMIN_COOKIE] = $app->session->sign([
+            'admin' => 'admin',
+            'iat' => time() - (App\Auth\Session::ADMIN_MAX_AGE + 60),
+        ]);
+        assertNull($app->session->adminUser());
+    });
+
     test('オープンリダイレクトは弾かれる', function (): void {
         assertSame('/', Session::safeRedirectPath('https://evil.example.com'));
         assertSame('/', Session::safeRedirectPath('//evil.example.com'));

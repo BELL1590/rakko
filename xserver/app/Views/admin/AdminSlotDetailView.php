@@ -19,6 +19,7 @@ final class AdminSlotDetailView
 {
     private const NOTIFICATION_LABEL = [
         'pending' => '未送信',
+        'sending' => '送信中',
         'requested' => '送信要求済み',
         'failed' => '失敗',
         'skipped' => 'スキップ',
