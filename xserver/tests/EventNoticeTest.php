@@ -57,18 +57,84 @@ describe('イベント別注意事項', function (): void {
         assertNotContains('交通状況により到着時刻が前後する場合があります。', $response->body);
     });
 
-    test('注意事項はHTMLとして解釈せずescapeする', function (): void {
-        $html = Layout::noticeCard('<script>alert("xss")</script>');
-        assertContains('&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;', $html);
-        assertNotContains('<script>', $html);
+    test('注意事項はHTMLとして解釈せずescapeする（公開ページ経由）', function (): void {
+        $app = makeApp();
+        $pageId = Fixtures::page($app, [
+            'slug' => 'xss-notice',
+            'requires_line_login' => false,
+            'notice_text' => "<script>alert('xss')</script>\n"
+                . '<img src=x onerror="alert(1)">' . "\n"
+                . '<b>太字にはしない</b>',
+        ]);
+        Fixtures::slot($app, $pageId);
+
+        $response = request($app, 'GET', '/reserve/xss-notice');
+        assertSame(200, $response->status);
+
+        // 生タグとして出力されないこと
+        // （エスケープ後の本文には「onerror=」という文字列自体は残るので、
+        //   タグとして成立していないことを見る）
+        assertNotContains('<script>alert', $response->body);
+        assertNotContains('<img', $response->body);
+        assertNotContains('<b>太字にはしない</b>', $response->body);
+
+        // エスケープ済みの文字列として見えること
+        assertContains('&lt;script&gt;', $response->body);
+        assertContains('&lt;img src=x onerror=', $response->body);
+        assertContains('&lt;b&gt;太字にはしない&lt;/b&gt;', $response->body);
     });
 
-    test('注意事項が空欄なら従来の共通注意事項へfallbackする', function (): void {
-        $null = Layout::noticeCard(null);
-        $blank = Layout::noticeCard(" \n ");
+    test('注意事項の各行は<li>1項目として出力される', function (): void {
+        $app = makeApp();
+        $pageId = Fixtures::page($app, [
+            'slug' => 'multiline-notice',
+            'requires_line_login' => false,
+            // 空行・前後の空白は無視する
+            'notice_text' => "  1行目  \n\n2行目\n\n\n  3行目",
+        ]);
+        Fixtures::slot($app, $pageId);
 
-        assertContains('開始時刻の15分前までに集合場所へお越しください。', $null);
-        assertContains('交通状況により到着時刻が前後する場合があります。', $blank);
+        $body = request($app, 'GET', '/reserve/multiline-notice')->body;
+
+        assertContains('<li>1行目</li>', $body);
+        assertContains('<li>2行目</li>', $body);
+        assertContains('<li>3行目</li>', $body);
+        assertNotContains('<li></li>', $body, '空行は項目にしない');
+    });
+
+    test('注意事項が空欄なら従来の共通注意事項へfallbackする（公開ページ経由）', function (): void {
+        $app = makeApp();
+
+        // NULL のケース
+        $nullPage = Fixtures::page($app, [
+            'slug' => 'notice-null',
+            'requires_line_login' => false,
+            'notice_text' => null,
+        ]);
+        Fixtures::slot($app, $nullPage);
+
+        // 空白のみのケース
+        $blankPage = Fixtures::page($app, [
+            'slug' => 'notice-blank',
+            'requires_line_login' => false,
+            'notice_text' => " \n ",
+        ]);
+        Fixtures::slot($app, $blankPage);
+
+        foreach (['notice-null', 'notice-blank'] as $slug) {
+            $body = request($app, 'GET', '/reserve/' . $slug)->body;
+            assertContains('ご利用にあたっての注意事項', $body, $slug);
+            assertContains('キャンセルは「マイ予約」からお願いします。', $body, $slug . ' は共通文言へfallback');
+        }
+    });
+
+    test('注意事項の単体挙動（改行分割とfallback）', function (): void {
+        $html = Layout::noticeCard("A\nB");
+        assertContains('<li>A</li>', $html);
+        assertContains('<li>B</li>', $html);
+
+        assertContains('キャンセルは「マイ予約」からお願いします。', Layout::noticeCard(null));
+        assertContains('キャンセルは「マイ予約」からお願いします。', Layout::noticeCard(' '));
     });
 
     test('予約ページ複製でも注意事項を引き継ぐ', function (): void {

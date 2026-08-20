@@ -145,6 +145,34 @@ final class Config
             && $this->str('LINE_LOGIN_CHANNEL_SECRET') !== '';
     }
 
+    /**
+     * LINE Login の `bot_prompt`（公式アカウント友だち追加の促し）。
+     *
+     * 任意機能なので既定は「送らない」。
+     * チャネルと公式アカウントがリンクされていない環境でこれを送ると
+     * authorize が 400 になり、予約導線そのものが止まるため。
+     *
+     * 未設定・空文字は null（送らない）。
+     * 'normal' / 'aggressive' のみ許可し、それ以外は設定ミスとして拒否する
+     * （黙って無視すると、設定したつもりで効いていない状態に気づけない）。
+     *
+     * @return 'normal'|'aggressive'|null
+     */
+    public function lineLoginBotPrompt(): ?string
+    {
+        $value = strtolower(trim($this->str('LINE_LOGIN_BOT_PROMPT')));
+        if ($value === '') {
+            return null;
+        }
+        if ($value !== 'normal' && $value !== 'aggressive') {
+            throw new ConfigError(sprintf(
+                'LINE_LOGIN_BOT_PROMPT must be empty, "normal" or "aggressive" (got "%s").',
+                $value
+            ));
+        }
+        return $value;
+    }
+
     public function hasLineMessaging(): bool
     {
         return $this->str('LINE_MESSAGING_CHANNEL_ACCESS_TOKEN') !== '';
