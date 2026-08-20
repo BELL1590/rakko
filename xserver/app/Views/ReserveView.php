@@ -132,7 +132,7 @@ final class ReserveView
 ' . Html::when($page['page_type'] === 'bus', '<h2>料金のご案内</h2>' . Layout::priceInfoCard()) . '
 
 <h2>注意事項</h2>
-' . Layout::noticeCard() . '
+' . Layout::noticeCard(isset($page['notice_text']) ? (string) $page['notice_text'] : null) . '
 
 <p class="center"><a class="btn btn-secondary" href="/my-bookings">マイ予約を確認する</a></p>
 ';
