@@ -125,6 +125,7 @@ final class AdminPagesView
         $vSlug = (string) ($page['slug'] ?? '');
         $vTitle = (string) ($page['title'] ?? '');
         $vDescription = (string) ($page['description'] ?? '');
+        $vNoticeText = (string) ($page['notice_text'] ?? '');
         $vStatus = (string) ($page['status'] ?? 'draft');
         $vPageType = (string) ($page['page_type'] ?? 'other');
         $vAllowMulti = $page !== null ? (int) $page['allow_multi_slot_booking'] === 1 : true;
@@ -241,6 +242,16 @@ final class AdminPagesView
       </div>
     </div>
     <p class="hint">種別は表示の初期値が変わるだけで、予約ロジックはこの値に依存しません。</p>
+  </div>
+
+  <div class="form-section">
+    <p class="form-section__title">公開注意事項</p>
+    <div class="field">
+      <label for="notice_text">注意事項</label>
+      <textarea id="notice_text" name="notice_text" rows="8" maxlength="3000"
+        placeholder="例：開始10分前までに受付へお越しください。">' . Html::esc($vNoticeText) . '</textarea>
+      <p class="hint">イベントごとに変更できます。1行につき1項目として公開ページに表示します。空欄の場合は従来の共通注意事項を表示します。</p>
+    </div>
   </div>
 
   <div class="form-section">
