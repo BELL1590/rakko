@@ -29,14 +29,16 @@ if (PHP_SAPI === 'cli-server') {
 
 require_once $root . '/app/bootstrap.php';
 
-// セキュリティヘッダ（Workers版 secureHeaders 相当）
+// セキュリティヘッダ（Workers版 secureHeaders 相当）。
+// 現行Viewsはinline styleを使用するため style-src ではunsafe-inlineを許可する。
+// LINE Loginは同一originのPOSTから access.line.me へ302遷移するため、form-actionに認可先だけを明示許可する。
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Referrer-Policy: strict-origin-when-cross-origin');
 header(
     "Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; "
-    . "style-src 'self'; img-src 'self' https://profile.line-scdn.net data:; "
-    . "form-action 'self'; frame-ancestors 'none'; base-uri 'self'"
+    . "style-src 'self' 'unsafe-inline'; img-src 'self' https://profile.line-scdn.net data:; "
+    . "form-action 'self' https://access.line.me; frame-ancestors 'none'; base-uri 'self'"
 );
 
 try {
