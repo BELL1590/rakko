@@ -1,0 +1,33 @@
+# XSERVER（Apache + mod_rewrite）用。実ファイル以外はすべて index.php で処理する。
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # HTTPS へ強制（XSERVER の無料SSL利用が前提）
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+  RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+  # 実在するファイル・ディレクトリ（/assets/*）はそのまま配信
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  RewriteRule ^ index.php [L]
+</IfModule>
+
+# 静的アセットのキャッシュ
+<IfModule mod_headers.c>
+  <FilesMatch "\.(css|js)$">
+    Header set Cache-Control "public, max-age=3600"
+  </FilesMatch>
+  Header always set X-Content-Type-Options "nosniff"
+</IfModule>
+
+# ディレクトリ一覧の抑止
+Options -Indexes
+
+# 万一 public/ 配下に置かれた場合でも設定ファイルは配信しない
+<FilesMatch "^(config\.local\.php|\.env|.*\.sql)$">
+  Require all denied
+</FilesMatch>

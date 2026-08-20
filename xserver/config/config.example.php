@@ -1,0 +1,45 @@
+<?php
+/**
+ * 設定サンプル。これを config.local.php としてコピーし、実際の値を入れる。
+ * config.local.php は Git 管理外（.gitignore 済み）。実値は絶対にコミットしないこと。
+ *
+ * 本番では config/ をドキュメントルート外（例: /home/<server-id>/rakko-app/config/）へ置く。
+ */
+
+declare(strict_types=1);
+
+return [
+    // 公開URL（末尾スラッシュなし）。LINEのcallback URL組み立てに使う。
+    'APP_URL' => 'https://example.xsrv.jp',
+
+    // 'production' | 'development'
+    'APP_ENV' => 'development',
+
+    // セッションCookie署名鍵。32文字以上のランダム文字列。
+    // 生成例: php -r 'echo bin2hex(random_bytes(32));'
+    'SESSION_SECRET' => '',
+
+    // --- XSERVER MySQL ---
+    'DB_HOST' => 'localhost',
+    'DB_PORT' => 3306,
+    'DB_NAME' => '',
+    'DB_USER' => '',
+    'DB_PASSWORD' => '',
+
+    // --- LINE Login Channel ---
+    'LINE_LOGIN_CHANNEL_ID' => '',
+    'LINE_LOGIN_CHANNEL_SECRET' => '',
+
+    // --- LINE Messaging API Channel ---
+    'LINE_MESSAGING_CHANNEL_ACCESS_TOKEN' => '',
+
+    // --- 管理画面 ---
+    'ADMIN_USERNAME' => '',
+    // password_hash() の出力を入れる。平文は保存しない。
+    // 生成例: php -r 'echo password_hash("パスワード", PASSWORD_DEFAULT), PHP_EOL;'
+    'ADMIN_PASSWORD_HASH' => '',
+
+    // LINE認証情報なしで全画面を確認するための疑似ログイン。
+    // production では必ず false（true のままだと起動時にエラーになる）。
+    'DEMO_MODE' => true,
+];
