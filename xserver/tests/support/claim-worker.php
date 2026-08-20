@@ -43,15 +43,15 @@ try {
     // 全ワーカーが同時に claim するよう、秒の変わり目まで待つ
     usleep((int) (1_000_000 - (int) (microtime(true) * 1_000_000) % 1_000_000));
 
-    $token = $notifications->claim($bookingId, $type, ReminderService::MAX_ATTEMPTS);
-    if ($token === null) {
+    $claim = $notifications->claim($bookingId, $type, ReminderService::MAX_ATTEMPTS);
+    if ($claim === null) {
         echo "SKIPPED\n";
         exit(0);
     }
 
     // ここに到達できるのは送信権を取った1プロセスだけであるべき
     file_put_contents($apiLog, getmypid() . "\n", FILE_APPEND | LOCK_EX);
-    $notifications->finish($bookingId, $type, $token, 'requested', null);
+    $notifications->finish($bookingId, $type, $claim['token'], 'requested', null);
 
     echo "CLAIMED\n";
     exit(0);

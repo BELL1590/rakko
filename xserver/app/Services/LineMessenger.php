@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Support\Config;
 use App\Support\Time;
+use App\Support\Uuid;
 
 /**
  * LINE Messaging API（push message）と通知本文の組み立て。
@@ -27,25 +28,43 @@ final class LineMessenger
      * 注意: HTTP 200 は「LINEプラットフォームが受け付けた」だけであり、
      * ユーザーへ届いたことの保証ではない。呼び出し側は requested として記録する。
      *
-     * @return array{ok: true}|array{ok: false, retryable: bool, error: string}
+     * $retryKey（X-Line-Retry-Key）は初回送信から必ず付ける。
+     * LINEが受理した直後にこちらのプロセスが落ちてDBへ requested を書けなくても、
+     * 同じキーで再送すればLINE側が重複と判定して 409 を返すため、
+     * ネットワーク境界を越えて二重配信を防げる。
+     *
+     * @param string|null $retryKey UUID形式。null なら付けない（未設定時の後方互換）
+     * @return array{ok: true, deduplicated: bool}|array{ok: false, retryable: bool, error: string}
      */
-    public function push(string $to, string $text): array
+    public function push(string $to, string $text, ?string $retryKey = null): array
     {
+        $headers = [
+            'Content-Type' => 'application/json',
+            'Authorization' => 'Bearer ' . $this->config->str('LINE_MESSAGING_CHANNEL_ACCESS_TOKEN'),
+        ];
+        // 不正な形式のキーはLINEに400で弾かれるため、送る前に検査する
+        if ($retryKey !== null && Uuid::isValid($retryKey)) {
+            $headers['X-Line-Retry-Key'] = $retryKey;
+        }
+
         $response = $this->http->post(
             self::PUSH_ENDPOINT,
             (string) json_encode([
                 'to' => $to,
                 'messages' => [['type' => 'text', 'text' => $text]],
             ], JSON_UNESCAPED_UNICODE),
-            [
-                'Content-Type' => 'application/json',
-                'Authorization' => 'Bearer ' . $this->config->str('LINE_MESSAGING_CHANNEL_ACCESS_TOKEN'),
-            ]
+            $headers
         );
 
         $status = $response['status'];
         if ($status >= 200 && $status < 300) {
-            return ['ok' => true];
+            return ['ok' => true, 'deduplicated' => false];
+        }
+
+        // 409 = 同じ retry key のリクエストを既に受理済み。
+        // 前回の送信は成功していたということなので、再送せず成功として扱う。
+        if ($status === 409) {
+            return ['ok' => true, 'deduplicated' => true];
         }
 
         // 本文にトークンは含めない。ステータスとAPIのmessageのみ保持する。

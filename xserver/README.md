@@ -46,7 +46,7 @@ xserver/
 │   │   ├── LineMessenger.php   # LINE Messaging API push
 │   │   └── ReminderService.php # 予約完了通知・リマインド
 │   ├── Support/
-│   │   ├── Config.php  Config­Error.php  Html.php  Messages.php  Time.php
+│   │   ├── Config.php  ConfigError.php  Html.php  Messages.php  Time.php  Uuid.php
 │   └── Views/
 │       ├── Layout.php  SlotParts.php
 │       ├── HomeView.php  ReserveView.php  BookingDetailView.php
@@ -60,7 +60,8 @@ xserver/
 ├── database/migrations/
 │   ├── 0001_initial.sql
 │   ├── 0002_seed_rakko.sql
-│   └── 0003_notification_sending_state.sql
+│   ├── 0003_notification_sending_state.sql
+│   └── 0004_notification_line_retry_key.sql
 ├── public/                     # ← ここだけをドキュメントルートにする
 │   ├── .htaccess
 │   ├── index.php               # フロントコントローラ
@@ -96,7 +97,7 @@ CSS と クライアントJS は Workers 版の `src/styles/*.ts` / `src/views/*
 | `reservation_pages` | 予約ページ（slug・公開状態・複数枠予約の可否など） |
 | `reservation_slots` | 予約枠（定員・受付期間・リマインド時刻・`reserved_seats`） |
 | `bookings` | 予約（`booking_group_id` で一括予約をまとめる） |
-| `notifications` | 通知の送信状態（冪等性と再試行の管理） |
+| `notifications` | 通知の送信状態（`status` / `claim_token` / `line_retry_key`） |
 | `schema_migrations` | 適用済みマイグレーション |
 
 ### 二重予約の防止（SQLite の部分ユニークインデックスの代替）
@@ -155,6 +156,28 @@ UPDATE notifications
 放置された `sending` は `NotificationRepository::STALE_SENDING_SECONDS`（600秒）を過ぎると
 再試行の対象に戻ります。push の HTTP タイムアウト（10秒）より十分に長くとってあります。
 
+#### ネットワーク境界での二重送信の防止（X-Line-Retry-Key）
+
+`sending` + `claim_token` はアプリ／DB側の同時実行競合を防ぎますが、
+**LINEがpushを受理した直後にPHPプロセスが落ち、DBへ `requested` を書けなかった**場合には、
+stale再取得後の再試行で同じ通知がもう一度配信されえます。
+
+そこで Push Message の `X-Line-Retry-Key` を**初回送信から必ず**付けています。
+LINE側が同じキーのリクエストを重複と判定して `409` を返すため、
+ネットワーク境界を越えた冪等性が得られます。`409` は「前回の送信が受理済み」を意味するので、
+再送せず `requested` として確定させます（通常の4xxは従来どおり `skipped`）。
+
+| | 役割 | 寿命 |
+|---|---|---|
+| `claim_token` | 送信権の排他。誰が送っているかを識別する | claim のたびに変わる |
+| `line_retry_key` | 同じ通知の同じ内容の再送であることをLINEに伝える | 一度発行したら保持（`COALESCE` で上書きしない） |
+
+5xx / タイムアウト / stale再取得のいずれでも同じ retry key を再利用します。
+一括予約で複数通知を1通にまとめて送る場合は、対象キーの集合から
+`Uuid::derive()` で決定的に導出します。こうすると
+「同じ顔ぶれの再送＝同じキー（LINEが重複排除する）」
+「顔ぶれが変わった＝本文も変わるので別キー（ちゃんと届く）」が両立します。
+
 ---
 
 ## 4. 一括予約の原子性とオーバーブッキング防止
@@ -181,6 +204,8 @@ MySQL は複数接続が本当に並行するため、この行ロックが必�
 通知側の排他は `tests/NotificationConcurrencyTest.php` で、
 同じ予約・同じ種別へ **8プロセスが同時に claim** し、
 送信権を取れるのが1プロセスだけ・Messaging API 相当処理がちょうど1回であることを確認しています。
+retry key についても、初回付与・5xx／タイムアウト／stale再取得での再利用・
+409での確定・通知ごとの独立性を同ファイルで検証しています。
 
 ---
 
@@ -334,8 +359,9 @@ XSERVER の Cron は実行結果をメール通知します。不要なら末尾
 | 静的アセット | Worker が文字列を返す | `public/assets/` を Apache が配信 |
 | 秘密情報 | `wrangler secret` | `config/config.local.php`（ドキュメントルート外） |
 | 通知の排他 | 単一ライターで直列化 | `sending` 状態 + `claim_token` への原子的遷移 |
+| 通知の冪等性 | — | `X-Line-Retry-Key`（409を受理済みとして扱う） |
 | セッション | 署名付きCookie（HMAC-SHA256） | 同左（PHPネイティブセッションは使わない） |
-| テスト | Vitest（120件） | 同梱ランナー（147件） |
+| テスト | Vitest（120件） | 同梱ランナー（158件） |
 
 ### 移植にあたっての実装上の注意
 

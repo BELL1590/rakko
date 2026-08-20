@@ -6,6 +6,7 @@ namespace App\Repositories;
 
 use App\Database\Db;
 use App\Support\Time;
+use App\Support\Uuid;
 
 /**
  * 通知ログ。
@@ -34,36 +35,59 @@ final class NotificationRepository
      * MySQL はUPDATEで行ロックを取ったあとにWHERE句を再評価するため、
      * 同時に走った2つ目のUPDATEは `sending` になった行に一致せず 0 行となる。
      *
-     * @return string|null 送信権を取れたら claim_token、取れなければ null
+     * `claim_token` は claim のたびに変わる（送信権の排他用）が、
+     * `line_retry_key` は一度発行したら保持し続ける
+     * （同じ通知の再送だと LINE 側に伝えるため。COALESCE で上書きしない）。
+     *
+     * @return array{token: string, retry_key: string}|null
+     *         送信権を取れたら claim_token と LINE retry key、取れなければ null
      */
-    public function claim(int $bookingId, string $type, int $maxAttempts, ?string $now = null): ?string
+    public function claim(int $bookingId, string $type, int $maxAttempts, ?string $now = null): ?array
     {
         $now ??= Time::nowUtc();
         $staleBefore = $this->staleCutoff($now);
         $token = bin2hex(random_bytes(16));
+        $newRetryKey = Uuid::v4();
 
         // 既にあれば無視される（UNIQUE制約）
         $this->db->run(
             'INSERT IGNORE INTO notifications
-               (booking_id, notification_type, status, attempt_count, created_at, updated_at)
-             VALUES (?, ?, \'pending\', 0, ?, ?)',
-            [$bookingId, $type, $now, $now]
+               (booking_id, notification_type, status, attempt_count,
+                line_retry_key, created_at, updated_at)
+             VALUES (?, ?, \'pending\', 0, ?, ?, ?)',
+            [$bookingId, $type, $newRetryKey, $now, $now]
         );
 
         $changed = $this->db->run(
             'UPDATE notifications
                 SET status = \'sending\',
                     claim_token = ?,
+                    line_retry_key = COALESCE(line_retry_key, ?),
                     attempt_count = attempt_count + 1,
                     updated_at = ?
               WHERE booking_id = ? AND notification_type = ?
                 AND attempt_count < ?
                 AND (status IN (\'pending\', \'failed\')
                      OR (status = \'sending\' AND updated_at < ?))',
-            [$token, $now, $bookingId, $type, $maxAttempts, $staleBefore]
+            [$token, $newRetryKey, $now, $bookingId, $type, $maxAttempts, $staleBefore]
         );
 
-        return $changed > 0 ? $token : null;
+        if ($changed === 0) {
+            return null;
+        }
+
+        // 実際に保存されている retry key を読み直す
+        // （初回は今生成したもの、再試行時は最初に発行したもの）
+        $row = $this->db->first(
+            'SELECT line_retry_key FROM notifications
+              WHERE booking_id = ? AND notification_type = ? AND claim_token = ?',
+            [$bookingId, $type, $token]
+        );
+
+        return [
+            'token' => $token,
+            'retry_key' => is_string($row['line_retry_key'] ?? null) ? $row['line_retry_key'] : $newRetryKey,
+        ];
     }
 
     /**

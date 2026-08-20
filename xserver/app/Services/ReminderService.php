@@ -9,6 +9,7 @@ use App\Repositories\NotificationRepository;
 use App\Repositories\UserRepository;
 use App\Support\Config;
 use App\Support\Time;
+use App\Support\Uuid;
 
 /**
  * 通知（予約完了 / 開始前リマインド）の送信制御。
@@ -52,9 +53,9 @@ final class ReminderService
         // 送信権を取れた予約だけを対象にする（token を持つ＝このプロセスが送る）
         $claimed = [];
         foreach ($bookingIds as $bookingId) {
-            $token = $this->notifications->claim($bookingId, $type, self::MAX_ATTEMPTS, $now);
-            if ($token !== null) {
-                $claimed[$bookingId] = $token;
+            $claim = $this->notifications->claim($bookingId, $type, self::MAX_ATTEMPTS, $now);
+            if ($claim !== null) {
+                $claimed[$bookingId] = $claim;
             }
         }
         if ($claimed === []) {
@@ -62,8 +63,8 @@ final class ReminderService
         }
 
         $finishAll = function (string $status, ?string $error) use ($claimed, $type, $now): void {
-            foreach ($claimed as $bookingId => $token) {
-                $this->notifications->finish($bookingId, $type, $token, $status, $error, $now);
+            foreach ($claimed as $bookingId => $claim) {
+                $this->notifications->finish($bookingId, $type, $claim['token'], $status, $error, $now);
             }
         };
 
@@ -76,9 +77,14 @@ final class ReminderService
             return 'skipped';
         }
 
-        $result = $this->messenger->push($lineUserId, $buildText(array_keys($claimed)));
+        $result = $this->messenger->push(
+            $lineUserId,
+            $buildText(array_keys($claimed)),
+            self::requestRetryKey($claimed)
+        );
 
         if ($result['ok'] === true) {
+            // 409（LINE側で重複と判定）も「前回の送信が受理済み」なので requested 扱い
             $finishAll('requested', null);
             return 'requested';
         }
@@ -87,6 +93,26 @@ final class ReminderService
         $status = $result['retryable'] ? 'failed' : 'skipped';
         $finishAll($status, $result['error']);
         return $status;
+    }
+
+    /**
+     * 1回のpushリクエストに付ける X-Line-Retry-Key を決める。
+     *
+     * 通知1件ならその通知のキーをそのまま使う。
+     * 一括予約で複数通知を1通にまとめる場合は、対象キーの集合から決定的に導出する。
+     * こうすると「同じ顔ぶれの再送＝同じキー（LINEが重複排除する）」
+     * 「顔ぶれが変わった＝本文も変わるので別キー（届く）」が両立する。
+     *
+     * @param array<int, array{token: string, retry_key: string}> $claimed
+     */
+    private static function requestRetryKey(array $claimed): string
+    {
+        $keys = array_values(array_map(
+            static fn (array $claim): string => $claim['retry_key'],
+            $claimed
+        ));
+
+        return count($keys) === 1 ? $keys[0] : Uuid::derive($keys);
     }
 
     /**
