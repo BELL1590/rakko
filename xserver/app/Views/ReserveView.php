@@ -70,6 +70,15 @@ final class ReserveView
       </div>'
             : '';
 
+        // 料金・注意事項は「同意する」より前に置く。
+        // 画面下部にあると、読まずに同意する導線になってしまう。
+        $infoSections = Html::when(
+            $page['page_type'] === 'bus',
+            '<h2>料金のご案内</h2>' . Layout::priceInfoCard()
+        ) . '
+<h2 id="notices">注意事項</h2>
+' . Layout::noticeCard(isset($page['notice_text']) ? (string) $page['notice_text'] : null);
+
         $content = '
 <section class="hero" style="margin:-16px -16px 16px">
   <h1>' . Html::esc($page['title']) . '</h1>
@@ -91,6 +100,8 @@ final class ReserveView
   <input type="hidden" name="csrf_token" value="' . Html::esc($csrfToken) . '">
   ' . $slotCards . '
 
+' . $infoSections . '
+
 <h2>代表者のご入力</h2>
 <div class="card">
   <div class="field">
@@ -108,10 +119,13 @@ final class ReserveView
   </div>
 
   <div class="field">
+    <p class="hint" style="margin-top:0">
+      ご予約の前に<a href="#notices">上記の注意事項</a>をご確認ください。
+    </p>
     <div class="checkbox-field">
       <input type="checkbox" id="agreed" name="agreed" value="1" required'
                 . ($values['agreed'] ? ' checked' : '') . '>
-      <label for="agreed">注意事項を確認し、内容に同意します<span class="req">必須</span></label>
+      <label for="agreed">上記の注意事項を確認し、内容に同意します<span class="req">必須</span></label>
     </div>
   </div>
 </div>
@@ -128,11 +142,9 @@ final class ReserveView
 </div>';
         }
 
+        // ログイン時はフォーム内（同意欄の直前）に出しているので、ここでは重複させない
         $content .= '
-' . Html::when($page['page_type'] === 'bus', '<h2>料金のご案内</h2>' . Layout::priceInfoCard()) . '
-
-<h2>注意事項</h2>
-' . Layout::noticeCard() . '
+' . ($loggedIn ? '' : $infoSections) . '
 
 <p class="center"><a class="btn btn-secondary" href="/my-bookings">マイ予約を確認する</a></p>
 ';

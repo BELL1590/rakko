@@ -61,7 +61,8 @@ xserver/
 │   ├── 0001_initial.sql
 │   ├── 0002_seed_rakko.sql
 │   ├── 0003_notification_sending_state.sql
-│   └── 0004_notification_line_retry_key.sql
+│   ├── 0004_notification_line_retry_key.sql
+│   └── 0005_reservation_page_notice_text.sql
 ├── public/                     # ← ここだけをドキュメントルートにする
 │   ├── .htaccess
 │   ├── index.php               # フロントコントローラ
@@ -212,6 +213,21 @@ retry key は必須です。`push()` は不正な形式のキーを渡される�
 ヘッダ無しで（＝重複防止が効かない状態で）送るのではなく、
 **Messaging API を呼ぶ前に失敗させます**。
 
+### 予約ページごとの公開注意事項
+
+`reservation_pages.notice_text`（`0005`）に予約ページ単位の注意事項を保持します。
+
+- 管理画面「予約ページの編集 → 公開注意事項」から変更でき、最大3000文字
+- **1行 = 1項目**として `<li>` に展開する（空行は無視）
+- 入力は `Html::esc()` を通すため、HTMLとしては解釈されない
+  （`<script>` や `<img onerror=...>` を入れても実行されない）
+- `NULL` または空欄のときだけ、従来の共通注意事項へフォールバックする
+- 予約ページを複製すると注意事項もコピーされる
+
+公開ページでは注意事項を「同意する」チェックボックスより**前**に表示します。
+画面下部にあると読まずに同意する導線になるため、
+枠選択 → 料金・注意事項 → 代表者入力＋同意、の順に並べています。
+
 ---
 
 ## 4. 一括予約の原子性とオーバーブッキング防止
@@ -348,6 +364,7 @@ PHPバージョンもアカウント全体で 8.0.30 のまま変更しないの
 | `DB_HOST` | `mysqlXXXX.xserver.jp` |
 | `DB_NAME` / `DB_USER` / `DB_PASSWORD` | 6-2 で作った値 |
 | `LINE_LOGIN_CHANNEL_ID` / `_SECRET` | LINE Developers の LINE Login チャネル |
+| `LINE_LOGIN_BOT_PROMPT` | 任意。空 = 送らない（既定）。`normal` / `aggressive` のみ指定可。**LINE Loginチャネルと公式アカウントをリンクしていない状態で設定すると authorize が400になりログインできません。** リンク済みの場合だけ設定してください |
 | `LINE_MESSAGING_CHANNEL_ACCESS_TOKEN` | Messaging API チャネルの長期アクセストークン |
 | `ADMIN_USERNAME` | 管理者ユーザー名 |
 | `ADMIN_PASSWORD_HASH` | `php -r 'echo password_hash("パスワード", PASSWORD_DEFAULT);'` の出力 |
@@ -386,6 +403,11 @@ XSERVER の Cron は実行結果をメール通知します。不要なら末尾
 
 ### 6-8. LINE Developers 側の設定
 
+- `LINE_LOGIN_BOT_PROMPT` は**既定で送りません**。
+  公式アカウントの友だち追加を促す任意パラメータですが、
+  チャネルと公式アカウントがリンクされていない状態で送ると
+  authorize が400になり、予約導線そのものが止まります。
+  リンク設定を済ませたうえで使いたい場合だけ設定してください。
 - LINE Login チャネルの **コールバックURL** に
   `https://<本番ドメイン>/auth/line/callback` を登録
 - Messaging API チャネルで **Webhook を無効**（本システムは push のみ使用）

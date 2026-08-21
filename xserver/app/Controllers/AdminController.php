@@ -203,11 +203,13 @@ final class AdminController
         }
 
         $checkinLabel = trim($request->str('checkin_label'));
+        $noticeText = trim($request->str('notice_text'));
 
         return [
             'slug' => $slug,
             'title' => mb_substr($title, 0, 80),
             'description' => mb_substr(trim($request->str('description')), 0, 300),
+            'notice_text' => $noticeText === '' ? null : mb_substr($noticeText, 0, 3000),
             'status' => $status,
             'page_type' => $pageType,
             'allow_multi_slot_booking' => $request->has('allow_multi_slot_booking'),
@@ -316,6 +318,7 @@ final class AdminController
             'slug' => $slug,
             'title' => $page['title'] . '（複製）',
             'description' => $page['description'],
+            'notice_text' => $page['notice_text'] ?? null,
             'status' => 'draft',
             'page_type' => $page['page_type'],
             'allow_multi_slot_booking' => (int) $page['allow_multi_slot_booking'] === 1,

@@ -233,12 +233,13 @@ describe('LINE Login', function (): void {
     ], $overrides);
 
     /** LineLogin を組み立てる。 */
-    $makeLogin = static function (FakeHttpClient $http): LineLogin {
-        return new LineLogin(new Config([
+    /** @param array<string, mixed> $extra */
+    $makeLogin = static function (FakeHttpClient $http, array $extra = []): LineLogin {
+        return new LineLogin(new Config(array_merge([
             'APP_URL' => 'https://reserve.example.com',
             'LINE_LOGIN_CHANNEL_ID' => '1234567890',
             'LINE_LOGIN_CHANNEL_SECRET' => 'line-login-secret',
-        ]), $http);
+        ], $extra)), $http);
     };
 
     test('認可URLに state・nonce・PKCE(S256)が含まれる', function () use ($makeLogin): void {
@@ -252,8 +253,86 @@ describe('LINE Login', function (): void {
         assertContains('code_challenge=the-challenge', $url);
         assertContains('code_challenge_method=S256', $url);
         assertContains('scope=openid%20profile', $url);
-        assertContains('bot_prompt=aggressive', $url);
         assertContains('redirect_uri=https%3A%2F%2Freserve.example.com%2Fauth%2Fline%2Fcallback', $url);
+    });
+
+    describe('bot_prompt（公式アカウント友だち追加の促し）', function () use ($makeLogin): void {
+        /** 必須パラメータは bot_prompt の設定によらず常に含まれる。 */
+        $assertCoreParams = static function (string $url): void {
+            assertContains('response_type=code', $url);
+            assertContains('client_id=1234567890', $url);
+            assertContains('state=the-state', $url);
+            assertContains('nonce=the-nonce', $url);
+            assertContains('code_challenge=the-challenge', $url);
+            assertContains('code_challenge_method=S256', $url);
+            assertContains('scope=openid%20profile', $url);
+            assertContains(
+                'redirect_uri=https%3A%2F%2Freserve.example.com%2Fauth%2Fline%2Fcallback',
+                $url
+            );
+        };
+
+        test('未設定なら bot_prompt を送らない（既定）', function () use ($makeLogin, $assertCoreParams): void {
+            $url = $makeLogin(new FakeHttpClient())
+                ->buildAuthorizeUrl('the-state', 'the-nonce', 'the-challenge');
+
+            assertNotContains('bot_prompt', $url, '任意パラメータは既定で付けない');
+            $assertCoreParams($url);
+        });
+
+        test('空文字を明示しても bot_prompt を送らない', function () use ($makeLogin, $assertCoreParams): void {
+            $url = $makeLogin(new FakeHttpClient(), ['LINE_LOGIN_BOT_PROMPT' => ''])
+                ->buildAuthorizeUrl('the-state', 'the-nonce', 'the-challenge');
+
+            assertNotContains('bot_prompt', $url);
+            $assertCoreParams($url);
+        });
+
+        test('normal 指定で bot_prompt=normal', function () use ($makeLogin, $assertCoreParams): void {
+            $url = $makeLogin(new FakeHttpClient(), ['LINE_LOGIN_BOT_PROMPT' => 'normal'])
+                ->buildAuthorizeUrl('the-state', 'the-nonce', 'the-challenge');
+
+            assertContains('bot_prompt=normal', $url);
+            $assertCoreParams($url);
+        });
+
+        test('aggressive 指定で bot_prompt=aggressive', function () use ($makeLogin, $assertCoreParams): void {
+            $url = $makeLogin(new FakeHttpClient(), ['LINE_LOGIN_BOT_PROMPT' => 'aggressive'])
+                ->buildAuthorizeUrl('the-state', 'the-nonce', 'the-challenge');
+
+            assertContains('bot_prompt=aggressive', $url);
+            $assertCoreParams($url);
+        });
+
+        test('前後の空白・大文字は正規化して受け付ける', function () use ($makeLogin): void {
+            $url = $makeLogin(new FakeHttpClient(), ['LINE_LOGIN_BOT_PROMPT' => '  Aggressive '])
+                ->buildAuthorizeUrl('the-state', 'the-nonce', 'the-challenge');
+
+            assertContains('bot_prompt=aggressive', $url);
+        });
+
+        test('不正値は黙って無視せず設定エラーにする', function () use ($makeLogin): void {
+            $login = $makeLogin(new FakeHttpClient(), ['LINE_LOGIN_BOT_PROMPT' => 'yes']);
+
+            $error = assertThrows(
+                ConfigError::class,
+                static fn () => $login->buildAuthorizeUrl('the-state', 'the-nonce', 'the-challenge'),
+                '設定ミスに気づけるようにする'
+            );
+            assertContains('LINE_LOGIN_BOT_PROMPT', $error->getMessage());
+        });
+
+        test('設定が無い既存の config でも壊れない', function (): void {
+            // 本番の config.local.php に LINE_LOGIN_BOT_PROMPT が無い状況
+            $config = new Config([
+                'APP_URL' => 'https://reserve.example.com',
+                'LINE_LOGIN_CHANNEL_ID' => '1234567890',
+                'LINE_LOGIN_CHANNEL_SECRET' => 'line-login-secret',
+            ]);
+
+            assertNull($config->lineLoginBotPrompt());
+            assertTrue($config->hasLineLogin());
+        });
     });
 
     test('正しい id_token を検証できる', function () use ($makeLogin, $makeIdToken, $claims): void {

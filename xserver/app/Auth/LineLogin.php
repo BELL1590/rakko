@@ -35,11 +35,22 @@ final class LineLogin
         return $this->config->baseUrl() . '/auth/line/callback';
     }
 
+    /**
+     * 認可URLを組み立てる。
+     *
+     * `bot_prompt` は既定では付けない。
+     * これは公式アカウントの友だち追加を促すための任意パラメータで、
+     * LINE Login チャネルと公式アカウントがリンクされていない環境では
+     * authorize が 400 になり、ログイン自体ができなくなる。
+     * 予約という主目的が、任意機能の設定漏れで止まらないようにする。
+     *
+     * 友だち追加導線を出したい場合だけ config の LINE_LOGIN_BOT_PROMPT に
+     * 'normal' / 'aggressive' を設定する（未設定なら送らない）。
+     */
     public function buildAuthorizeUrl(
         string $state,
         string $nonce,
-        string $codeChallenge,
-        bool $promptAddFriend = true
+        string $codeChallenge
     ): string {
         $params = [
             'response_type' => 'code',
@@ -51,10 +62,12 @@ final class LineLogin
             'code_challenge' => $codeChallenge,
             'code_challenge_method' => 'S256',
         ];
-        if ($promptAddFriend) {
-            // 公式アカウントのリンク設定がある場合、友だち追加オプションを表示する
-            $params['bot_prompt'] = 'aggressive';
+
+        $botPrompt = $this->config->lineLoginBotPrompt();
+        if ($botPrompt !== null) {
+            $params['bot_prompt'] = $botPrompt;
         }
+
         return self::AUTHORIZE_ENDPOINT . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
     }
 

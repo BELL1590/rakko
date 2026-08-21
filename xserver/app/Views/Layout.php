@@ -9,6 +9,16 @@ use App\Support\Html;
 /** 共通レイアウトと共通パーツ。Workers版 src/views/layout.ts の移植。 */
 final class Layout
 {
+    private const DEFAULT_NOTICE_ITEMS = [
+        '開始時刻の15分前までに集合場所へお越しください。定刻に出発・開始します。',
+        '枠ごとに別のご予約です。複数の枠をご利用の場合はまとめてご予約ください。',
+        'ご予約人数を変更する場合は、一度キャンセルのうえ再度ご予約ください。',
+        'キャンセルは「マイ予約」からお願いします。無断キャンセルはご遠慮ください。',
+        '座席指定はできません。当日の受付順となります。',
+        '車内・館内での迷惑行為はご遠慮ください。',
+        '交通状況により到着時刻が前後する場合があります。',
+    ];
+
     /**
      * @param array{title: string, userName?: ?string, admin?: bool,
      *   alert?: array{type: string, message: string}|null, bodyEnd?: string} $options
@@ -134,20 +144,34 @@ final class Layout
 </section>';
     }
 
-    /** 利用にあたっての注意事項。 */
-    public static function noticeCard(): string
+    /**
+     * 利用にあたっての注意事項。
+     * カスタム本文は1行を1項目として扱い、HTMLとしては解釈しない。
+     */
+    public static function noticeCard(?string $noticeText = null): string
     {
+        $items = [];
+        $normalized = trim((string) $noticeText);
+        if ($normalized !== '') {
+            foreach (preg_split('/\R/u', $normalized) ?: [] as $line) {
+                $line = trim($line);
+                if ($line !== '') {
+                    $items[] = $line;
+                }
+            }
+        }
+        if ($items === []) {
+            $items = self::DEFAULT_NOTICE_ITEMS;
+        }
+
+        $list = implode('', array_map(
+            static fn (string $item): string => '<li>' . Html::esc($item) . '</li>',
+            $items,
+        ));
+
         return '<section class="card">
   <h3 style="margin-top:0">ご利用にあたっての注意事項</h3>
-  <ul class="notes">
-    <li>開始時刻の15分前までに集合場所へお越しください。定刻に出発・開始します。</li>
-    <li>枠ごとに別のご予約です。複数の枠をご利用の場合はまとめてご予約ください。</li>
-    <li>ご予約人数を変更する場合は、一度キャンセルのうえ再度ご予約ください。</li>
-    <li>キャンセルは「マイ予約」からお願いします。無断キャンセルはご遠慮ください。</li>
-    <li>座席指定はできません。当日の受付順となります。</li>
-    <li>車内・館内での迷惑行為はご遠慮ください。</li>
-    <li>交通状況により到着時刻が前後する場合があります。</li>
-  </ul>
+  <ul class="notes">' . $list . '</ul>
 </section>';
     }
 }

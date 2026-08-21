@@ -29,6 +29,11 @@ return [
     // --- LINE Login Channel ---
     'LINE_LOGIN_CHANNEL_ID' => '',
     'LINE_LOGIN_CHANNEL_SECRET' => '',
+    // 公式アカウントの友だち追加を促す任意パラメータ（bot_prompt）。
+    // 空 = 送らない（既定）。'normal' / 'aggressive' のみ指定できる。
+    // LINE LoginチャネルとLINE公式アカウントをリンクしていない状態でこれを送ると
+    // authorize が400になりログインできなくなるため、リンク設定済みの場合だけ設定する。
+    'LINE_LOGIN_BOT_PROMPT' => '',
 
     // --- LINE Messaging API Channel ---
     'LINE_MESSAGING_CHANNEL_ACCESS_TOKEN' => '',

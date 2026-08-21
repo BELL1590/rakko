@@ -12,6 +12,7 @@ declare(strict_types=1);
 use App\App;
 use App\Http\Request;
 use App\Http\Response;
+use App\Http\SecurityHeaders;
 use App\Support\ConfigError;
 
 $root = dirname(__DIR__);
@@ -29,15 +30,9 @@ if (PHP_SAPI === 'cli-server') {
 
 require_once $root . '/app/bootstrap.php';
 
-// セキュリティヘッダ（Workers版 secureHeaders 相当）
-header('X-Content-Type-Options: nosniff');
-header('X-Frame-Options: DENY');
-header('Referrer-Policy: strict-origin-when-cross-origin');
-header(
-    "Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; "
-    . "style-src 'self'; img-src 'self' https://profile.line-scdn.net data:; "
-    . "form-action 'self'; frame-ancestors 'none'; base-uri 'self'"
-);
+// セキュリティヘッダ（Workers版 secureHeaders 相当）。
+// 内容は App\Http\SecurityHeaders に定義し、テストから検証できるようにしている。
+SecurityHeaders::send();
 
 try {
     $boot = rakko_boot();

@@ -64,12 +64,12 @@ final class SlotRepository
         $now ??= Time::nowUtc();
         return $this->db->insert(
             'INSERT INTO reservation_pages
-               (slug, title, description, status, page_type, allow_multi_slot_booking,
+               (slug, title, description, notice_text, status, page_type, allow_multi_slot_booking,
                 requires_line_login, max_slots_per_checkout, checkin_label, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [
-                $input['slug'], $input['title'], $input['description'], $input['status'],
-                $input['page_type'], (int) $input['allow_multi_slot_booking'],
+                $input['slug'], $input['title'], $input['description'], $input['notice_text'] ?? null,
+                $input['status'], $input['page_type'], (int) $input['allow_multi_slot_booking'],
                 (int) $input['requires_line_login'], (int) $input['max_slots_per_checkout'],
                 $input['checkin_label'], $now, $now,
             ]
@@ -82,13 +82,13 @@ final class SlotRepository
         $now ??= Time::nowUtc();
         $this->db->run(
             'UPDATE reservation_pages
-                SET slug = ?, title = ?, description = ?, status = ?, page_type = ?,
+                SET slug = ?, title = ?, description = ?, notice_text = ?, status = ?, page_type = ?,
                     allow_multi_slot_booking = ?, requires_line_login = ?,
                     max_slots_per_checkout = ?, checkin_label = ?, updated_at = ?
               WHERE id = ?',
             [
-                $input['slug'], $input['title'], $input['description'], $input['status'],
-                $input['page_type'], (int) $input['allow_multi_slot_booking'],
+                $input['slug'], $input['title'], $input['description'], $input['notice_text'] ?? null,
+                $input['status'], $input['page_type'], (int) $input['allow_multi_slot_booking'],
                 (int) $input['requires_line_login'], (int) $input['max_slots_per_checkout'],
                 $input['checkin_label'], $now, $pageId,
             ]

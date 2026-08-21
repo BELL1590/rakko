@@ -63,7 +63,7 @@ final class AuthController
         ]);
 
         return Response::redirect(
-            $this->line->buildAuthorizeUrl($state, $nonce, $codeChallenge, true),
+            $this->line->buildAuthorizeUrl($state, $nonce, $codeChallenge),
             302,
         );
     }
