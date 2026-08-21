@@ -4,8 +4,11 @@
 
   var blocks = Array.prototype.slice.call(form.querySelectorAll('[data-slot-block]'));
   var panel = form.querySelector('[data-confirm-panel]');
-  var sticky = form.querySelector('[data-sticky-cta]');
-  var openBtn = form.querySelector('[data-open-confirm]');
+  // sticky CTA は position:fixed の下部固定バーで、</form> の外に描画されている。
+  // form.querySelector で探すと必ず null になり、
+  // 「確認パネルは hidden、CTA も出ない」＝送信手段ゼロになるため document から探す。
+  var sticky = document.querySelector('[data-sticky-cta]');
+  var openBtn = document.querySelector('[data-open-confirm]');
   var dismissBtn = document.getElementById('confirm-dismiss');
   var nameInput = document.getElementById('representative_name');
   var phoneInput = document.getElementById('phone');
@@ -15,9 +18,14 @@
   // サーバー側は同行者欄を hidden にしていないので、JS無効なら
   // 「全枠の人数ラジオ＋最大人数分の同行者欄＋確認セクション」が
   // すべて見える従来のフォーム1枚として成立する。
-  if (panel) panel.hidden = true;
-  if (sticky) sticky.hidden = false;
-  if (dismissBtn) dismissBtn.hidden = false;
+  //
+  // 確認パネルを隠してよいのは、代わりの導線（sticky CTA と開くボタン）が
+  // 揃っているときだけ。片方でも欠けたら隠さない。
+  // 隠したうえで代替導線も出せないと、送信ボタンへ到達する手段が無くなる。
+  var hasStickyPath = !!(sticky && openBtn);
+  if (panel && hasStickyPath) panel.hidden = true;
+  if (hasStickyPath) sticky.hidden = false;
+  if (dismissBtn && hasStickyPath) dismissBtn.hidden = false;
 
   function partySize(block) {
     var checked = block.querySelector('input[type="radio"]:checked');
