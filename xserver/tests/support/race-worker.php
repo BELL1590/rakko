@@ -14,6 +14,7 @@ use App\Database\Connection;
 use App\Database\Db;
 use App\Repositories\BookingRepository;
 use App\Repositories\SlotRepository;
+use App\Repositories\UserRepository;
 use App\Services\BookingService;
 use App\Support\Config;
 
@@ -34,7 +35,7 @@ $config = new Config([
 
 try {
     $db = new Db((new Connection($config))->pdo());
-    $service = new BookingService($db, new SlotRepository($db), new BookingRepository($db));
+    $service = new BookingService($db, new SlotRepository($db), new BookingRepository($db), new UserRepository($db));
 
     // 全ワーカーが同時に走り出すよう、秒の変わり目まで待つ
     usleep((int) ((1_000_000 - (int) (microtime(true) * 1_000_000) % 1_000_000)));

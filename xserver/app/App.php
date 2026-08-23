@@ -65,7 +65,7 @@ final class App
         $this->users = new UserRepository($db);
         $this->notifications = new NotificationRepository($db);
 
-        $this->booking = new BookingService($db, $this->slots, $this->bookings);
+        $this->booking = new BookingService($db, $this->slots, $this->bookings, $this->users);
         $this->messenger = new LineMessenger($config, $http);
         $this->reminders = new ReminderService(
             $config,
@@ -119,6 +119,7 @@ final class App
     public function bookingController(): BookingController
     {
         return new BookingController(
+            $this->config,
             $this->slots,
             $this->bookings,
             $this->users,

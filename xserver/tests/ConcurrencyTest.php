@@ -16,6 +16,7 @@ use App\Database\Connection;
 use App\Database\Db;
 use App\Repositories\BookingRepository;
 use App\Repositories\SlotRepository;
+use App\Repositories\UserRepository;
 use App\Services\BookingService;
 use App\Support\Config;
 
@@ -25,7 +26,7 @@ function makeIsolatedService(Config $config): array
     $db = new Db((new Connection($config))->pdo());
     $slots = new SlotRepository($db);
     $bookings = new BookingRepository($db);
-    return [$db, new BookingService($db, $slots, $bookings)];
+    return [$db, new BookingService($db, $slots, $bookings, new UserRepository($db))];
 }
 
 describe('同時アクセス時の定員保護', function (): void {

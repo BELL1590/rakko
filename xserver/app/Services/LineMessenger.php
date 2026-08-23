@@ -126,14 +126,30 @@ final class LineMessenger
     }
 
     /**
+     * 予約詳細ページの絶対URL。
+     *
+     * LINEの本文からタップできるよう、通常のHTTPS絶対URLにする。
+     * ドメインはここでは決めず、必ず呼び出し元が Config::baseUrl() から渡す。
+     *
+     * `completed=1` は予約直後のWeb画面用の表示状態なので付けない
+     * （LINEから後日開く恒久リンクには不要）。
+     */
+    public static function bookingDetailUrl(string $baseUrl, int $bookingId): string
+    {
+        return rtrim($baseUrl, '/') . '/bookings/' . $bookingId;
+    }
+
+    /**
      * 予約完了通知の本文。一括予約のときは1通に全枠をまとめる。
      *
      * @param list<array<string, mixed>> $bookings
+     * @param string|null $detailUrl 予約詳細ページの絶対URL（一括予約なら先頭予約のURL）
      */
     public static function buildBookingConfirmationText(
         string $pageTitle,
         string $pageType,
-        array $bookings
+        array $bookings,
+        ?string $detailUrl = null
     ): string {
         $lines = [self::icon($pageType) . ' ' . $pageTitle, '予約が完了しました。'];
 
@@ -153,11 +169,21 @@ final class LineMessenger
         }
 
         $lines[] = '';
-        $lines[] = '予約内容は下記ページから確認できます。';
+        if ($detailUrl !== null && $detailUrl !== '') {
+            $lines[] = '予約内容はこちらから確認できます。';
+            $lines[] = $detailUrl;
+        } else {
+            // URLを組み立てられない場合でも従来の案内は残す
+            $lines[] = '予約内容は「マイ予約」から確認できます。';
+        }
         return implode("\n", $lines);
     }
 
-    /** 開始前リマインドの本文。 */
+    /**
+     * 開始前リマインドの本文。
+     *
+     * @param string|null $detailUrl 予約詳細ページの絶対URL
+     */
     public static function buildReminderText(
         string $pageTitle,
         string $pageType,
@@ -165,7 +191,8 @@ final class LineMessenger
         string $startAt,
         ?string $origin,
         ?string $location,
-        int $partySize
+        int $partySize,
+        ?string $detailUrl = null
     ): string {
         $time = Time::formatJstTime($startAt);
         $lines = [sprintf('%s %s「%s」のお知らせ', self::icon($pageType), $pageTitle, $slotName)];
@@ -183,6 +210,13 @@ final class LineMessenger
 
         $lines[] = '';
         $lines[] = '予約人数：' . $partySize . '名';
+
+        if ($detailUrl !== null && $detailUrl !== '') {
+            $lines[] = '';
+            $lines[] = '予約内容を確認する:';
+            $lines[] = $detailUrl;
+        }
+
         return implode("\n", $lines);
     }
 }

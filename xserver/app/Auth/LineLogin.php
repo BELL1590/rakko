@@ -39,13 +39,18 @@ final class LineLogin
      * 認可URLを組み立てる。
      *
      * `bot_prompt` は既定では付けない。
-     * これは公式アカウントの友だち追加を促すための任意パラメータで、
-     * LINE Login チャネルと公式アカウントがリンクされていない環境では
-     * authorize が 400 になり、ログイン自体ができなくなる。
+     * これは公式アカウントの友だち追加を促すための「任意」パラメータで、
+     * リンク設定が未完了の状態で送ると authorize が 400 になり、
+     * ログイン自体ができなくなる。
      * 予約という主目的が、任意機能の設定漏れで止まらないようにする。
      *
      * 友だち追加導線を出したい場合だけ config の LINE_LOGIN_BOT_PROMPT に
      * 'normal' / 'aggressive' を設定する（未設定なら送らない）。
+     *
+     * 注意: `bot_prompt` が任意なだけで、
+     * 「LINE Loginチャネルと予約専用LINE公式アカウントのリンク」自体は必須。
+     * friendship/v1/status がリンク済みアカウントとの友だち状態を返すため、
+     * リンクしていないと友だち判定が成立せず、公開予約が一切通らない。
      */
     public function buildAuthorizeUrl(
         string $state,
@@ -172,8 +177,17 @@ final class LineLogin
     }
 
     /**
-     * 公式アカウントとの友だち状態。
-     * 取得できない場合は null（不明）として扱う。
+     * 友だち状態。
+     *
+     * 重要: このAPIが返す friendFlag は
+     * **LINE Loginチャネルにリンクされた LINE公式アカウント** との友だち状態。
+     * 任意の公式アカウントを指定できるわけではないので、
+     * 予約専用LINE公式アカウントを対象にするには、
+     * そのアカウントとLINE Loginチャネルをリンクしておく必要がある
+     * （デプロイの必須前提。README「6-8. LINE Developers 側の設定」参照）。
+     *
+     * 取得できない場合は null（不明）として扱い、
+     * 呼び出し側は未追加と同じ扱いにする（fail closed）。
      */
     public function fetchFriendshipStatus(string $accessToken): ?bool
     {

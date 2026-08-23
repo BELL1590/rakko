@@ -149,8 +149,12 @@ final class Config
      * LINE Login の `bot_prompt`（公式アカウント友だち追加の促し）。
      *
      * 任意機能なので既定は「送らない」。
-     * チャネルと公式アカウントがリンクされていない環境でこれを送ると
-     * authorize が 400 になり、予約導線そのものが止まるため。
+     * リンク設定が未完了の状態でこれを送ると authorize が 400 になり、
+     * 予約導線そのものが止まるため。
+     *
+     * 「LINE Loginチャネルと予約専用LINE公式アカウントのリンク」自体は
+     * friendship/v1/status による友だち判定に必要な必須前提であり、
+     * 任意なのは bot_prompt を送るかどうかだけ。
      *
      * 未設定・空文字は null（送らない）。
      * 'normal' / 'aggressive' のみ許可し、それ以外は設定ミスとして拒否する
@@ -171,6 +175,24 @@ final class Config
             ));
         }
         return $value;
+    }
+
+    /**
+     * 予約専用LINE公式アカウントの友だち追加URL。未設定なら null。
+     * https:// 以外は誤設定として扱い、リンクにしない。
+     *
+     * ここで案内するアカウントは、LINE Loginチャネルにリンクした
+     * 予約専用LINE公式アカウントと同一でなければならない。
+     * 別アカウントを案内すると、友だち追加しても
+     * friendship/v1/status の friendFlag が true にならず予約できない。
+     */
+    public function lineFriendUrl(): ?string
+    {
+        $url = trim($this->str('LINE_FRIEND_URL'));
+        if ($url === '' || !str_starts_with($url, 'https://')) {
+            return null;
+        }
+        return $url;
     }
 
     public function hasLineMessaging(): bool

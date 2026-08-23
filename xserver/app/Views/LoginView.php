@@ -24,6 +24,10 @@ final class LoginView
     <input type="hidden" name="csrf_token" value="' . Html::esc($csrfToken) . '">
     <input type="hidden" name="redirect_to" value="' . $redirect . '">
     <button class="btn btn-line" type="submit">LINEでログイン</button>
+    <p class="hint" style="margin:10px 0 0">
+      LINEアプリが開かない場合は、Chrome / Safari で開いてからお試しください。<br>
+      X・Instagram・Facebook などのアプリ内ブラウザでは、LINEアプリが起動しないことがあります。
+    </p>
   </form>'
             : '<p class="alert alert-error" style="margin:0">LINEログインが設定されていません'
                 . '（LINE_LOGIN_CHANNEL_ID / LINE_LOGIN_CHANNEL_SECRET 未設定）。</p>';
@@ -60,9 +64,10 @@ final class LoginView
   </ul>
   ' . $lineBlock . '
   <div class="notice">
-    <strong>公式アカウントの友だち追加のお願い</strong><br>
-    LINEでの予約完了通知・開始前リマインドを受け取るには、草加健康センター公式アカウントの友だち追加が必要です。
-    友だち追加をしなくてもご予約自体は可能です。
+    <strong>予約専用LINE公式アカウントの友だち追加が必要です</strong><br>
+    ご予約には、予約専用LINE公式アカウントの友だち追加が必要です。
+    予約完了通知と開始前リマインドはこのアカウントからお送りします。
+    ログイン後、まだ友だち追加がお済みでない場合は追加のご案内を表示します。
   </div>
   <p class="muted" style="margin:0">取得する情報は表示名とユーザーIDのみです。トークの内容は取得しません。</p>
 </div>

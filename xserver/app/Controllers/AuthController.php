@@ -138,8 +138,12 @@ final class AuthController
         $displayName = mb_substr(trim($request->str('demo_display_name')) ?: 'デモユーザー', 0, 50);
         $redirectTo = Session::safeRedirectPath($request->str('redirect_to'), '/');
 
-        // デモでは友だち状態は不明扱い
-        $user = $this->users->upsertByLineId($lineUserId, $displayName, null, null);
+        // 公開予約は友だち追加済みを必須にしているため、
+        // デモユーザーは「友だち追加済み」として作る。
+        // そうしないと DEMO_MODE で予約フローを一切確認できない。
+        // production では assertDemoModeSafety() が DEMO_MODE を拒否するので、
+        // この抜け道が本番に出ることはない。
+        $user = $this->users->upsertByLineId($lineUserId, $displayName, null, true);
         $this->session->startUserSession((int) $user['id']);
 
         return Response::redirect($redirectTo);
