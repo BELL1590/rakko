@@ -23,6 +23,7 @@ final class ReserveView
      * @param array{representative_name: string, phone: string, agreed: bool,
      *   slots: array<int, array{selected: bool, party_size: int, companion_names: list<string>}>} $values
      * @param array{type: string, message: string}|null $alert
+     * @param string|null $friendUrl 予約専用LINE公式アカウントの友だち追加URL（未設定ならnull）
      */
     public static function render(
         array $page,
@@ -34,8 +35,14 @@ final class ReserveView
         bool $loggedIn,
         string $loginUrl,
         string $nowUtc,
-        ?array $alert = null
+        ?array $alert = null,
+        ?string $friendUrl = null
     ): string {
+        // 公開予約は「予約専用LINE公式アカウントの友だち追加済み」が必須。
+        // 未追加（0）も取得できなかった場合（null）も予約させない。
+        // サーバー側の BookingService でも同じ条件を検証している。
+        $friendRequired = (int) ($page['requires_line_login'] ?? 1) === 1;
+        $needsFriendAdd = $friendRequired && $loggedIn && $isLineFriend !== 1;
         $visible = array_values(array_filter(
             $slots,
             static fn (array $slot): bool => !empty($slot['is_visible'])
@@ -53,14 +60,6 @@ final class ReserveView
             ),
             $visible
         ));
-
-        $friendNotice = $isLineFriend === 0
-            ? '<div class="notice" style="margin-bottom:16px">
-        現在、草加健康センター公式アカウントの友だち追加が確認できていません。<br>
-        <strong>LINEリマインドを受け取るには公式アカウントの友だち追加が必要です。</strong>
-        友だち追加をしなくてもご予約は完了できます。
-      </div>'
-            : '';
 
         $multiHint = (int) $page['allow_multi_slot_booking'] === 1 && count($bookable) > 1
             ? '<div class="notice" style="margin-bottom:16px">
@@ -88,14 +87,16 @@ final class ReserveView
         ) . '
 </section>
 
-' . $friendNotice . $multiHint . '
+' . $multiHint . '
 
 <h2>予約する枠を選ぶ</h2>
 ' . ($visible === []
             ? '<div class="card"><p class="muted" style="margin:0">現在ご案内できる枠はありません。</p></div>'
             : '');
 
-        if ($loggedIn) {
+        if ($needsFriendAdd) {
+            $content .= self::friendRequiredCard($friendUrl, $loginUrl);
+        } elseif ($loggedIn) {
             $content .= '<form method="post" action="/reserve/' . Html::esc($page['slug']) . '/book" id="reserve-form">
   <input type="hidden" name="csrf_token" value="' . Html::esc($csrfToken) . '">
   ' . $slotCards . '
@@ -142,9 +143,9 @@ final class ReserveView
 </div>';
         }
 
-        // ログイン時はフォーム内（同意欄の直前）に出しているので、ここでは重複させない
+        // フォームを出している場合は、その中（同意欄の直前）に出しているので重複させない
         $content .= '
-' . ($loggedIn ? '' : $infoSections) . '
+' . (($loggedIn && !$needsFriendAdd) ? '' : $infoSections) . '
 
 <p class="center"><a class="btn btn-secondary" href="/my-bookings">マイ予約を確認する</a></p>
 ';
@@ -296,6 +297,29 @@ final class ReserveView
       <p class="companion-group__lead">同行者のお名前（選んだ人数に応じて上から順にご記入ください）</p>
       ' . $fields . '
     </div>';
+    }
+
+    /**
+     * 予約専用LINE公式アカウントの友だち追加が必要なときの案内。
+     *
+     * 友だち追加そのものはLINE側で行うため、追加後に友だち状態を取り直す必要がある。
+     * 友だち状態はLINEログイン時に更新するので、「追加した」導線は再ログインへ送る。
+     */
+    private static function friendRequiredCard(?string $friendUrl, string $loginUrl): string
+    {
+        $addButton = $friendUrl !== null
+            ? '<a class="btn btn-line" href="' . Html::esc($friendUrl) . '" target="_blank" rel="noopener">'
+                . '予約専用LINE公式アカウントを友だち追加する</a>'
+            : '<p class="hint">LINEアプリで予約専用LINE公式アカウントを検索し、友だち追加してください。</p>';
+
+        return '<section class="card center" id="friend-required">
+  <h3 style="margin-top:0">予約専用LINE公式アカウントの友だち追加が必要です</h3>
+  <p>ご予約の確定通知と開始前のリマインドは、予約専用LINE公式アカウントからお送りします。
+    お知らせが届くよう、友だち追加をお願いします。</p>
+  ' . $addButton . '
+  <p class="hint" style="margin-top:14px">友だち追加が終わったら、下のボタンで状態を更新してください。</p>
+  <a class="btn btn-secondary" href="' . Html::esc($loginUrl) . '">友だち追加を確認して予約に進む</a>
+</section>';
     }
 
     /** 送信前の確認セクション。JS無効時は最初から開いた状態で表示される。 */

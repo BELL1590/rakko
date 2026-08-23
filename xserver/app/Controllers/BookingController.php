@@ -12,6 +12,7 @@ use App\Repositories\SlotRepository;
 use App\Repositories\UserRepository;
 use App\Services\BookingService;
 use App\Services\ReminderService;
+use App\Support\Config;
 use App\Support\Messages;
 use App\Support\Time;
 use App\Views\BookingDetailView;
@@ -22,6 +23,7 @@ use App\Views\ReserveView;
 final class BookingController
 {
     public function __construct(
+        private Config $config,
         private SlotRepository $slots,
         private BookingRepository $bookings,
         private UserRepository $users,
@@ -148,6 +150,7 @@ final class BookingController
             self::loginUrlFor('/reserve/' . $slug),
             $now,
             Messages::fromCode($request->query('msg')),
+            $this->config->lineFriendUrl(),
         ));
     }
 
@@ -204,6 +207,7 @@ final class BookingController
                     self::loginUrlFor('/reserve/' . $slug),
                     $now,
                     ['type' => 'error', 'message' => $result['message']],
+                    $this->config->lineFriendUrl(),
                 ),
                 400,
             );
@@ -281,7 +285,7 @@ final class BookingController
 
         $justCompleted = $request->query('completed') === '1';
         $notificationNote = $justCompleted && (int) ($user['is_line_friend'] ?? -1) === 0
-            ? 'LINEでの通知をご希望の場合は、草加健康センター公式アカウントを友だち追加してください。'
+            ? 'LINEでの通知をご希望の場合は、予約専用LINE公式アカウントを友だち追加してください。'
             : null;
 
         return Response::html(BookingDetailView::render(

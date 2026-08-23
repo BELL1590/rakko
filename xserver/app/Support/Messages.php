@@ -30,6 +30,11 @@ final class Messages
         'slot_not_found' => ['type' => 'error', 'message' => '予約枠が見つかりません。'],
         'no_selection' => ['type' => 'error', 'message' => '予約する枠を1つ以上選択してください。'],
         'too_many_slots' => ['type' => 'error', 'message' => '一度に選択できる枠数を超えています。'],
+        'friend_required' => [
+            'type' => 'error',
+            'message' => '予約専用LINE公式アカウントの友だち追加が必要です。'
+                . '友だち追加のうえ、もう一度LINEログインしてからご予約ください。',
+        ],
 
         'admin_login_failed' => ['type' => 'error', 'message' => 'ユーザー名またはパスワードが違います。'],
         'admin_login_required' => ['type' => 'error', 'message' => '管理画面へのアクセスにはログインが必要です。'],
@@ -68,6 +73,8 @@ final class Messages
             'SLOT_NOT_FOUND' => 'slot_not_found',
             'NO_SELECTION' => 'no_selection',
             'TOO_MANY_SLOTS' => 'too_many_slots',
+            'FRIEND_REQUIRED' => 'friend_required',
+            'LOGIN_REQUIRED' => 'login_required',
             default => 'save_failed',
         };
     }

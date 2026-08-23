@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Database\Db;
 use App\Repositories\BookingRepository;
 use App\Repositories\SlotRepository;
+use App\Repositories\UserRepository;
 use App\Support\Time;
 use App\Support\Uuid;
 
@@ -39,7 +40,8 @@ final class BookingService
     public function __construct(
         private Db $db,
         private SlotRepository $slots,
-        private BookingRepository $bookings
+        private BookingRepository $bookings,
+        private UserRepository $users
     ) {
     }
 
@@ -167,6 +169,18 @@ final class BookingService
         }
         if (!$isAdmin && $page['status'] !== 'published') {
             return ['ok' => false, 'code' => 'PAGE_CLOSED', 'message' => 'この予約ページは現在受け付けていません。'];
+        }
+
+        // 公開予約は「予約専用LINE公式アカウントの友だち追加済み」を必須にする。
+        // 予約完了通知・リマインドはpushで送るため、友だちでないと届かない。
+        // Cookieやフォームの値ではなくDBの友だち状態を見るので、
+        // 画面を迂回してPOSTしても通らない。
+        // 管理者代理予約（source=admin）はLINEを使わないため対象外。
+        if (!$isAdmin && (int) $page['requires_line_login'] === 1) {
+            $friendCheck = $this->requireLineFriend($input['user_id']);
+            if ($friendCheck !== null) {
+                return $friendCheck;
+            }
         }
 
         // 同じ枠を2回選んでいても1件として扱う
@@ -517,6 +531,45 @@ final class BookingService
             ];
         }
         throw $e;
+    }
+
+    /**
+     * LINEログイン必須ページの友だち追加チェック。
+     * 問題なければ null、駄目ならエラー配列を返す。
+     *
+     * @return array{ok: false, code: string, message: string}|null
+     */
+    private function requireLineFriend(?int $userId): ?array
+    {
+        if ($userId === null) {
+            return [
+                'ok' => false,
+                'code' => 'LOGIN_REQUIRED',
+                'message' => 'ご予約にはLINEログインが必要です。',
+            ];
+        }
+
+        $user = $this->users->findById($userId);
+        if ($user === null) {
+            return [
+                'ok' => false,
+                'code' => 'LOGIN_REQUIRED',
+                'message' => 'ご予約にはLINEログインが必要です。',
+            ];
+        }
+
+        // NULL（友だち状態を取得できなかった）も未追加として扱う。
+        // 「たぶん友だち」で予約を通すと、通知が届かないまま当日を迎える。
+        if ((int) ($user['is_line_friend'] ?? 0) !== 1) {
+            return [
+                'ok' => false,
+                'code' => 'FRIEND_REQUIRED',
+                'message' => '予約専用LINE公式アカウントの友だち追加が必要です。'
+                    . '友だち追加のうえ、もう一度LINEログインしてからご予約ください。',
+            ];
+        }
+
+        return null;
     }
 
     private function uuid4(): string

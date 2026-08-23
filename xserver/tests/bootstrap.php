@@ -214,7 +214,22 @@ function makeApp(array $overrides = [], ?FakeHttpClient $http = null): App
     ];
 
     $config = new Config(array_merge($base, $overrides));
-    $db = new Db((new Connection($config))->pdo());
+    // テスト1件ごとに新しいPDOを張ると、スイート全体で MySQL の
+    // max_connections を超えて "Too many connections" になる。
+    // 同じ接続設定なら1本を使い回す。
+    // （ConcurrencyTest などが意図的に別接続を張る箇所は、
+    //   そちらで直接 new Connection() しているので影響しない）
+    static $pooled = [];
+    $key = implode('|', [
+        $config->str('DB_HOST'),
+        (string) $config->int('DB_PORT'),
+        $config->str('DB_NAME'),
+        $config->str('DB_USER'),
+    ]);
+    if (!isset($pooled[$key])) {
+        $pooled[$key] = (new Connection($config))->pdo();
+    }
+    $db = new Db($pooled[$key]);
 
     if (!$migrated) {
         // 前回実行の残骸を消してから作り直す
@@ -276,6 +291,22 @@ function request(
     $_POST = $post;
     $_SERVER['QUERY_STRING'] = http_build_query($query);
     return $app->handle(new Request($method, $path, $query, $post, $repeated));
+}
+
+/** FakeHttpClient が送ったLINE pushの本文を取り出す。 */
+function pushedTexts(FakeHttpClient $http): array
+{
+    $texts = [];
+    foreach ($http->calls as $call) {
+        if (!str_contains($call['url'], '/v2/bot/message/push')) {
+            continue;
+        }
+        $body = json_decode($call['body'], true);
+        if (is_array($body) && isset($body['messages'][0]['text'])) {
+            $texts[] = (string) $body['messages'][0]['text'];
+        }
+    }
+    return $texts;
 }
 
 /** 管理者としてログイン済みのアプリを作る。 */

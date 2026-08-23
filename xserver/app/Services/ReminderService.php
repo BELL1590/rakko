@@ -192,15 +192,26 @@ final class ReminderService
             array_map(static fn (array $b): int => (int) $b['id'], $bookings),
             'booking_confirmation',
             $user['line_user_id'] ?? null,
-            static function (array $claimedIds) use ($bookings, $first): string {
+            function (array $claimedIds) use ($bookings, $first): string {
                 $target = array_values(array_filter(
                     $bookings,
                     static fn (array $b): bool => in_array((int) $b['id'], $claimedIds, true)
                 ));
+                // 一括予約でも詳細ページは先頭予約のURL1本にする。
+                // 予約詳細は booking_group_id で同一グループをまとめて表示するため、
+                // 先頭へのリンクからグループ全体を確認できる。
+                $detailUrl = $target === []
+                    ? null
+                    : LineMessenger::bookingDetailUrl(
+                        $this->config->baseUrl(),
+                        (int) $target[0]['id']
+                    );
+
                 return LineMessenger::buildBookingConfirmationText(
                     (string) $first['page_title'],
                     (string) $first['page_type'],
-                    $target
+                    $target,
+                    $detailUrl
                 );
             },
             $now
@@ -234,7 +245,11 @@ final class ReminderService
                 (string) $target['start_at'],
                 $target['origin'] !== null ? (string) $target['origin'] : null,
                 $target['location'] !== null ? (string) $target['location'] : null,
-                (int) $target['party_size']
+                (int) $target['party_size'],
+                LineMessenger::bookingDetailUrl(
+                    $this->config->baseUrl(),
+                    (int) $target['booking_id']
+                )
             );
 
             $outcome = $this->dispatch(

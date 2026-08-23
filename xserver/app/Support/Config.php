@@ -173,6 +173,19 @@ final class Config
         return $value;
     }
 
+    /**
+     * 予約専用LINE公式アカウントの友だち追加URL。未設定なら null。
+     * https:// 以外は誤設定として扱い、リンクにしない。
+     */
+    public function lineFriendUrl(): ?string
+    {
+        $url = trim($this->str('LINE_FRIEND_URL'));
+        if ($url === '' || !str_starts_with($url, 'https://')) {
+            return null;
+        }
+        return $url;
+    }
+
     public function hasLineMessaging(): bool
     {
         return $this->str('LINE_MESSAGING_CHANNEL_ACCESS_TOKEN') !== '';

@@ -37,6 +37,12 @@ return [
 
     // --- LINE Messaging API Channel ---
     'LINE_MESSAGING_CHANNEL_ACCESS_TOKEN' => '',
+    // 予約専用LINE公式アカウントの友だち追加URL。
+    // 公開予約は友だち追加が必須のため、未追加の利用者にこのリンクを案内する。
+    // LINE Official Account Manager の「友だち追加ガイド」で確認できる
+    // https://lin.ee/xxxxxxx 形式のURL、または https://line.me/R/ti/p/@xxxxxxx。
+    // 未設定でも予約フロー自体は動くが、利用者が自力で検索する必要がある。
+    'LINE_FRIEND_URL' => '',
 
     // --- 管理画面 ---
     'ADMIN_USERNAME' => '',
