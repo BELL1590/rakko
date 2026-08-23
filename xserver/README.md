@@ -253,6 +253,30 @@ LINEログイン
 - **管理者代理予約（`source=admin`）は対象外**です。LINEを使わないため。
 - `requires_line_login = 0` のページも対象外です（LINEアカウント自体が無いため）。
 
+### スマートフォンでのLINEアプリ起動（auto login）
+
+LINEの auto login は、こちら側で有効化する設定ではありません。
+標準の v2.1 認可エンドポイントへ、無効化パラメータを付けずに、
+**利用者の操作を起点として遷移する**ことで成立します。本実装は次を満たしています。
+
+| 条件 | 本実装 |
+|---|---|
+| `access.line.me/oauth2/v2.1/authorize` を使う | ✅ Universal Link / App Link の対象 |
+| `disable_auto_login` を付けない | ✅ 付けていない |
+| `disable_ios_auto_login` を付けない | ✅ 付けていない |
+| 利用者の操作起点の遷移 | ✅ 素のフォーム送信 → 302。JSで横取りしない |
+| CSP が認可先への遷移を許可 | ✅ `form-action` に `https://access.line.me` |
+| `line://` 等の独自スキームに差し替えない | ✅ 通常のHTTPS URL |
+
+`tests/LineAutoLoginTest.php` でこれらを固定しています。
+
+**アプリ起動はOS・ブラウザ依存で100%保証できません。** 特に
+X・Instagram・Facebook などの**アプリ内ブラウザではLINEアプリが起動しない**ことがあります。
+そのためログイン画面に「LINEアプリが開かない場合は Chrome / Safari で開いてください」と案内しています。
+
+アプリが起動しない場合でも、認可URLは通常のHTTPS URLなので
+**LINEのWebログイン画面が開き、そのまま予約を継続できます**（fallback）。
+
 ### LINE通知に予約詳細URLを入れる
 
 予約完了通知とリマインドの末尾に、予約詳細ページの絶対URLを入れます。
