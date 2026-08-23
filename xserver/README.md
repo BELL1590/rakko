@@ -244,6 +244,12 @@ LINEログイン
 予約フォーム → 予約確定 → 予約完了通知（詳細URL付き）
 ```
 
+> **前提: LINE Loginチャネルと予約専用LINE公式アカウントのリンクが必須です。**
+> `friendship/v1/status` が返す `friendFlag` は
+> 「LINE Loginチャネルにリンクされた公式アカウント」との友だち状態であり、
+> 任意のアカウントを指定できません。リンクしていないと友だち判定が成立せず、
+> **誰も予約できない状態**になります。設定手順は「6-8. LINE Developers 側の設定」を参照。
+
 - 友だち状態は**LINEログイン時**に取得して `users.is_line_friend` へ保存します。
   友だち追加した直後は保存済みの値が古いため、案内カードの
   「友だち追加を確認して予約に進む」から**再ログイン**して取り直します。
@@ -430,10 +436,10 @@ PHPバージョンもアカウント全体で 8.0.30 のまま変更しないの
 | `SESSION_SECRET` | `openssl rand -base64 48` などで生成した**32文字以上**の値 |
 | `DB_HOST` | `mysqlXXXX.xserver.jp` |
 | `DB_NAME` / `DB_USER` / `DB_PASSWORD` | 6-2 で作った値 |
-| `LINE_LOGIN_CHANNEL_ID` / `_SECRET` | LINE Developers の LINE Login チャネル |
-| `LINE_LOGIN_BOT_PROMPT` | 任意。空 = 送らない（既定）。`normal` / `aggressive` のみ指定可。**LINE Loginチャネルと公式アカウントをリンクしていない状態で設定すると authorize が400になりログインできません。** リンク済みの場合だけ設定してください |
-| `LINE_FRIEND_URL` | 予約専用LINE公式アカウントの友だち追加URL（`https://lin.ee/xxxxxxx` など）。公開予約は友だち追加が必須のため、未追加の利用者にこのリンクを案内します。未設定でもフローは動きますが、利用者が自力で検索する必要があります |
-| `LINE_MESSAGING_CHANNEL_ACCESS_TOKEN` | Messaging API チャネルの長期アクセストークン |
+| `LINE_LOGIN_CHANNEL_ID` / `_SECRET` | **必須。** LINE Developers の LINE Login チャネル。**予約専用LINE公式アカウントとリンク済みであること**（6-8参照） |
+| `LINE_MESSAGING_CHANNEL_ACCESS_TOKEN` | **必須。** 予約専用LINE公式アカウントのMessaging APIチャネルの長期アクセストークン。予約完了通知・リマインドをこのアカウントから送ります |
+| `LINE_FRIEND_URL` | **設定推奨。** 予約専用LINE公式アカウントの友だち追加URL（`https://lin.ee/xxxxxxx` など）。未追加の利用者にこのリンクを案内します。未設定でもフローは動きますが、利用者が自力で検索する必要があります。**LINE Loginチャネルにリンクしたアカウントと同一のものを指定してください** |
+| `LINE_LOGIN_BOT_PROMPT` | **任意。** 空 = 送らない（既定）。`normal` / `aggressive` のみ指定可。リンク設定が未完了のまま設定すると authorize が400になりログインできません。※任意なのはこのパラメータだけで、**リンク設定自体は必須**です |
 | `ADMIN_USERNAME` | 管理者ユーザー名 |
 | `ADMIN_PASSWORD_HASH` | `php -r 'echo password_hash("パスワード", PASSWORD_DEFAULT);'` の出力 |
 | `DEMO_MODE` | **必ず `false`**（`production` で `true` にすると起動を拒否します） |
@@ -471,14 +477,44 @@ XSERVER の Cron は実行結果をメール通知します。不要なら末尾
 
 ### 6-8. LINE Developers 側の設定
 
-- **予約専用LINE公式アカウント**（Messaging APIチャネル）の友だち追加URLを
+#### 必須の前提: チャネルとアカウントのリンク
+
+> **予約専用LINE公式アカウント + そのMessaging APIチャネル + LINE Loginチャネル
+> を正しくリンクすることが必須です。**
+
+公開予約は友だち追加を必須にしており、その判定に
+`GET https://api.line.me/friendship/v1/status` を使います。
+このAPIが返す `friendFlag` は
+**「LINE Loginチャネルにリンクされた LINE公式アカウント」との友だち状態**であり、
+任意のアカウントを指定することはできません。
+
+そのため、リンクしていない／別のアカウントをリンクしていると、
+利用者が予約専用アカウントを友だち追加しても `friendFlag` が `true` にならず、
+**誰も予約できない状態**になります。
+
+手順:
+
+1. LINE Developers コンソールで、**予約専用LINE公式アカウント**の
+   Messaging APIチャネルと LINE Loginチャネルを、**同一プロバイダー**に置く
+2. LINE Loginチャネルの「リンクされたLINE公式アカウント」に、
+   **予約専用LINE公式アカウント**を設定する
+3. `LINE_FRIEND_URL` に案内するアカウントが、
+   **手順2でリンクしたアカウントと同一**であることを確認する
+4. `LINE_MESSAGING_CHANNEL_ACCESS_TOKEN` が、
+   **同じ予約専用アカウント**のMessaging APIチャネルのものであることを確認する
+
+（既存の「草加健康センター公式アカウント」とは**別の予約専用アカウント**を使う想定です。
+別アカウントのトークンやURLを混ぜると、通知先と友だち判定の対象がずれます）
+
+#### そのほかの設定
+
+- **予約専用LINE公式アカウント**の友だち追加URLを
   LINE Official Account Manager の「友だち追加ガイド」で確認し、
-  `LINE_FRIEND_URL` に設定してください。公開予約は友だち追加が必須です。
-- `LINE_LOGIN_BOT_PROMPT` は**既定で送りません**。
-  公式アカウントの友だち追加を促す任意パラメータですが、
-  チャネルと公式アカウントがリンクされていない状態で送ると
+  `LINE_FRIEND_URL` に設定してください（設定推奨）。
+- `LINE_LOGIN_BOT_PROMPT` は**既定で送りません**（任意）。
+  友だち追加を促すパラメータですが、上記のリンク設定が未完了のまま送ると
   authorize が400になり、予約導線そのものが止まります。
-  リンク設定を済ませたうえで使いたい場合だけ設定してください。
+  **任意なのはこのパラメータを送るかどうかだけで、リンク設定自体は必須**です。
 - LINE Login チャネルの **コールバックURL** に
   `https://<本番ドメイン>/auth/line/callback` を登録
 - Messaging API チャネルで **Webhook を無効**（本システムは push のみ使用）

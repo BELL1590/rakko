@@ -31,6 +31,20 @@ function authorizeUrlForAutoLogin(array $extra = []): string
 }
 
 describe('LINEアプリ起動（auto login）の前提', function (): void {
+    test('bot_promptは任意だが、チャネルとアカウントのリンク自体は必須', function (): void {
+        // friendship/v1/status はリンク済みの公式アカウントとの友だち状態を返す。
+        // 「リンクは bot_prompt を使うときだけ必要」と誤解されないよう、
+        // コード・設定ファイルのコメントにも必須前提であることを残しておく。
+        $root = dirname(__DIR__);
+
+        $lineLogin = (string) file_get_contents($root . '/app/Auth/LineLogin.php');
+        assertContains('リンクされた LINE公式アカウント', $lineLogin);
+        assertContains('friendship/v1/status', $lineLogin);
+
+        $config = (string) file_get_contents($root . '/config/config.example.php');
+        assertContains('friendship/v1/status', $config, '設定ファイルにも前提を書く');
+    });
+
     test('auto loginを無効化するパラメータを付けない', function (): void {
         $url = authorizeUrlForAutoLogin();
 

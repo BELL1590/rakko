@@ -8,6 +8,19 @@ declare(strict_types=1);
  * 予約完了通知・リマインドはpushで送るため、友だちでないと届かない。
  * 「予約はできたのに通知は来ない」を避けるため、公開予約は友だち追加を必須にする。
  * 管理者代理予約はLINEを使わないので対象外。
+ *
+ * 【デプロイの必須前提】
+ * 友だち判定に使う GET https://api.line.me/friendship/v1/status が返す friendFlag は、
+ * 「LINE Loginチャネルにリンクされた LINE公式アカウント」との友だち状態である。
+ * 任意のアカウントを指定することはできない。
+ * したがって本番では
+ *   予約専用LINE公式アカウント + そのMessaging APIチャネル + LINE Loginチャネル
+ * を正しくリンクしておく必要がある。リンクしていない／別アカウントをリンクしていると、
+ * 利用者が予約専用アカウントを友だち追加しても friendFlag が true にならず、
+ * 誰も予約できない状態になる。
+ *
+ * ここで検証するのは、保存済みの友だち状態に対するアプリ側のfail-closed挙動まで。
+ * リンク設定そのものはLINE Developers側の設定なので、テストでは検証できない。
  */
 
 /** 友だち状態を指定してユーザーを作る。 */
@@ -83,7 +96,7 @@ describe('友だち追加の必須化（サーバー側）', function (): void {
         assertSame(0, (int) $app->slots->findSlot($slotId)['reserved_seats']);
     });
 
-    test('friendFlag=null（取得できなかった）でも予約が成立しない', function (): void {
+    test('friendFlag=null（取得できなかった）でも予約が成立しない（fail closed）', function (): void {
         resetRequestState();
         $app = makeApp();
         [$pageId, $slotId] = friendFixture($app);
