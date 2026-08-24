@@ -569,3 +569,276 @@ describe('LIFFのCSPと設定', function (): void {
         assertNull((new Config([]))->liffUrl(), '未設定ならnull');
     });
 });
+
+describe('公開予約の未ログイン導線（Finding 1）', function (): void {
+    /** LIFF設定済みのアプリと公開予約ページ。 */
+    $withLiff = static function (array $overrides = []): array {
+        resetRequestState();
+        $app = makeApp(array_merge(['LINE_LIFF_ID' => '2001234567-AbCdEfGh'], $overrides));
+        $pageId = Fixtures::page($app, ['slug' => 'liff-entry']);
+        $slotId = Fixtures::slot($app, $pageId);
+        return [$app, $pageId, $slotId];
+    };
+
+    test('生の /reserve/{slug} の未ログイン導線がLIFFを優先する', function () use ($withLiff): void {
+        [$app] = $withLiff();
+
+        $body = request($app, 'GET', '/reserve/liff-entry')->body;
+
+        assertContains('/liff?redirect_to=' . rawurlencode('/reserve/liff-entry'), $body);
+        assertContains('LINEでログインして予約する', $body);
+        assertNotContains('href="/login?redirect_to=', $body, 'LIFF設定済みならLIFFを優先する');
+    });
+
+    test('LINE_LIFF_ID未設定なら既存OAuth導線のまま', function (): void {
+        resetRequestState();
+        $app = makeApp(['LINE_LIFF_ID' => '']);
+        Fixtures::slot($app, Fixtures::page($app, ['slug' => 'no-liff']));
+
+        $body = request($app, 'GET', '/reserve/no-liff')->body;
+
+        assertContains('/login?redirect_to=' . rawurlencode('/reserve/no-liff'), $body);
+        assertNotContains('/liff?redirect_to=', $body);
+    });
+
+    test('/bookings/{id} などの戻り先もLIFF経由で維持される', function () use ($withLiff): void {
+        [$app, , $slotId] = $withLiff();
+        $booking = $app->booking->createBooking([
+            'slot_id' => $slotId,
+            'user_id' => Fixtures::user($app, 'U-detail-owner'),
+            'source' => 'line',
+            'representative_name' => '山田太郎',
+            'phone' => '090-1234-5678',
+            'party_size' => 1,
+            'companion_names' => [],
+            'agreed' => true,
+        ]);
+
+        resetRequestState();
+        $response = request($app, 'GET', '/bookings/' . $booking['booking_id']);
+
+        assertSame(303, $response->status);
+        $location = $response->headers['Location'];
+        assertContains('/liff?redirect_to=', $location);
+        assertContains(rawurlencode('/bookings/' . $booking['booking_id']), $location);
+    });
+
+    test('/my-bookings の戻り先もLIFF経由で維持される', function () use ($withLiff): void {
+        [$app] = $withLiff();
+
+        $response = request($app, 'GET', '/my-bookings');
+
+        assertSame(303, $response->status);
+        assertContains('/liff?redirect_to=' . rawurlencode('/my-bookings'), $response->headers['Location']);
+    });
+
+    test('LIFF画面のfallbackは /login を直接指す（ループしない）', function () use ($withLiff): void {
+        [$app] = $withLiff();
+
+        // 予約ページ → /liff
+        $reserveBody = request($app, 'GET', '/reserve/liff-entry')->body;
+        assertContains('/liff?redirect_to=' . rawurlencode('/reserve/liff-entry'), $reserveBody);
+
+        // /liff → fallbackは /login。/liff へは戻さない
+        $liffBody = request($app, 'GET', '/liff', [], [
+            'redirect_to' => '/reserve/liff-entry',
+            'msg' => 'login_required',
+        ])->body;
+
+        assertContains('href="/login?redirect_to=' . rawurlencode('/reserve/liff-entry') . '"', $liffBody);
+        assertNotContains('href="/liff', $liffBody, 'fallbackから /liff へ戻さない');
+    });
+
+    test('新端末: 未ログイン → LIFF → 本人確認 → 元の予約ページ', function () use ($withLiff): void {
+        // 新端末（Cookieなし）で生の予約URLを開く
+        [$app] = $withLiff();
+        $redirect = request($app, 'GET', '/reserve/liff-entry');
+        assertSame(200, $redirect->status);
+        assertContains('/liff?redirect_to=' . rawurlencode('/reserve/liff-entry'), $redirect->body);
+
+        // LIFF画面が行き先を保持している
+        $liffBody = request($app, 'GET', '/liff', [], ['redirect_to' => '/reserve/liff-entry'])->body;
+        assertContains('data-redirect-to="/reserve/liff-entry"', $liffBody);
+
+        // LIFFからの本人確認でセッションが作られ、元のページへ戻る
+        $http = new FakeHttpClient();
+        $http->responses = [liffVerifyResponse(), liffFriendshipResponse(true)];
+        resetRequestState();
+        $app2 = makeApp(['LINE_LIFF_ID' => '2001234567-AbCdEfGh'], $http);
+        Fixtures::slot($app2, Fixtures::page($app2, ['slug' => 'liff-entry']));
+
+        $csrf = $app2->session->csrfToken();
+        $auth = request($app2, 'POST', '/auth/liff/session', [
+            'csrf_token' => $csrf,
+            'id_token' => 'raw.id.token',
+            'access_token' => 'raw-access-token',
+            'redirect_to' => '/reserve/liff-entry',
+        ]);
+
+        assertSame(200, $auth->status);
+        $json = json_decode($auth->body, true);
+        assertSame('/reserve/liff-entry', $json['redirect_to']);
+        assertNotNull($app2->session->userId());
+
+        // 元の予約ページが予約フォームつきで開ける
+        $reserve = request($app2, 'GET', '/reserve/liff-entry');
+        assertSame(200, $reserve->status);
+        assertContains('id="reserve-form"', $reserve->body);
+    });
+});
+
+describe('友だち追加後の再同期（Finding 2）', function (): void {
+    test('初回false → 追加後にサーバー再確認でtrue → DBがtrueになる', function (): void {
+        resetRequestState();
+        $http = new FakeHttpClient();
+        $http->responses = [
+            liffVerifyResponse(), liffFriendshipResponse(false),  // 1回目: 未追加
+            liffVerifyResponse(), liffFriendshipResponse(true),   // 再同期: 追加済み
+        ];
+        $app = makeApp([], $http);
+        $slotId = Fixtures::slot($app, Fixtures::page($app, ['slug' => 'resync']));
+
+        $csrf = $app->session->csrfToken();
+        $post = ['csrf_token' => $csrf, 'id_token' => 'raw.id.token', 'access_token' => 'raw-access-token'];
+
+        $first = json_decode(request($app, 'POST', '/auth/liff/session', $post)->body, true);
+        assertSame(false, $first['is_line_friend'], '1回目は未追加');
+        assertSame(0, (int) $app->users->findByLineUserId('U-liff-user-0001')['is_line_friend']);
+
+        // liff.requestFriendship() → getFriendship() でtrueを確認したあとの再POST
+        $second = json_decode(request($app, 'POST', '/auth/liff/session', $post)->body, true);
+        assertSame(true, $second['is_line_friend'], '再同期でサーバーがtrueを取得');
+        assertSame(1, (int) $app->users->findByLineUserId('U-liff-user-0001')['is_line_friend']);
+
+        // 予約できるようになる
+        assertContains('id="reserve-form"', request($app, 'GET', '/reserve/resync')->body);
+    });
+
+    test('初回false → 再確認もfalse → 予約不可のまま', function (): void {
+        resetRequestState();
+        $http = new FakeHttpClient();
+        $http->responses = [
+            liffVerifyResponse(), liffFriendshipResponse(false),
+            liffVerifyResponse(), liffFriendshipResponse(false),
+        ];
+        $app = makeApp([], $http);
+        $slotId = Fixtures::slot($app, Fixtures::page($app, ['slug' => 'resync']));
+
+        $csrf = $app->session->csrfToken();
+        $post = ['csrf_token' => $csrf, 'id_token' => 'raw.id.token', 'access_token' => 'raw-access-token'];
+        request($app, 'POST', '/auth/liff/session', $post);
+        $second = json_decode(request($app, 'POST', '/auth/liff/session', $post)->body, true);
+
+        assertSame(false, $second['is_line_friend']);
+        assertSame(0, (int) $app->users->findByLineUserId('U-liff-user-0001')['is_line_friend']);
+
+        $body = request($app, 'GET', '/reserve/resync')->body;
+        assertContains('予約専用LINE公式アカウントの友だち追加が必要です', $body);
+        assertNotContains('id="reserve-form"', $body);
+
+        $book = request($app, 'POST', '/reserve/resync/book', [
+            'csrf_token' => $csrf,
+            'representative_name' => '山田太郎',
+            'phone' => '090-1234-5678',
+            'agreed' => '1',
+            'party_size_' . $slotId => '1',
+        ], [], ['slot_selected' => [(string) $slotId]]);
+        assertSame(400, $book->status);
+        assertSame(0, $app->slots->sumConfirmedSeats($slotId));
+    });
+
+    test('初回false → 再確認がnull（取得失敗）→ 予約不可のまま', function (): void {
+        resetRequestState();
+        $http = new FakeHttpClient();
+        $http->responses = [
+            liffVerifyResponse(), liffFriendshipResponse(false),
+            liffVerifyResponse(), ['status' => 500, 'body' => 'server error'],
+        ];
+        $app = makeApp([], $http);
+        $slotId = Fixtures::slot($app, Fixtures::page($app, ['slug' => 'resync']));
+
+        $csrf = $app->session->csrfToken();
+        $post = ['csrf_token' => $csrf, 'id_token' => 'raw.id.token', 'access_token' => 'raw-access-token'];
+        request($app, 'POST', '/auth/liff/session', $post);
+        $second = json_decode(request($app, 'POST', '/auth/liff/session', $post)->body, true);
+
+        assertNull($second['is_line_friend'], 'サーバーが取得できなければ不明を返す');
+        // 取得できなかった値でDBの既知の状態を消さない（upsertのCOALESCE）。
+        // 直前に確認できた false が残るだけで、いずれにせよ予約はできない。
+        assertSame(
+            0,
+            (int) $app->users->findByLineUserId('U-liff-user-0001')['is_line_friend'],
+            '不明値で既知の状態を上書きしない'
+        );
+
+        $body = request($app, 'GET', '/reserve/resync')->body;
+        assertContains('予約専用LINE公式アカウントの友だち追加が必要です', $body);
+        assertSame(0, $app->slots->sumConfirmedSeats($slotId));
+    });
+
+    test('再同期でもサーバーがLINEへ問い合わせ直している', function (): void {
+        resetRequestState();
+        $http = new FakeHttpClient();
+        $http->responses = [
+            liffVerifyResponse(), liffFriendshipResponse(false),
+            liffVerifyResponse(), liffFriendshipResponse(true),
+        ];
+        $app = makeApp([], $http);
+
+        $csrf = $app->session->csrfToken();
+        $post = ['csrf_token' => $csrf, 'id_token' => 'raw.id.token', 'access_token' => 'raw-access-token'];
+        request($app, 'POST', '/auth/liff/session', $post);
+        request($app, 'POST', '/auth/liff/session', $post);
+
+        $friendshipCalls = array_values(array_filter(
+            $http->calls,
+            static fn (array $c): bool => str_contains($c['url'], '/friendship/v1/status')
+        ));
+        assertSame(2, count($friendshipCalls), '再同期でも friendship API を呼び直すこと');
+
+        $verifyCalls = array_values(array_filter(
+            $http->calls,
+            static fn (array $c): bool => str_contains($c['url'], '/oauth2/v2.1/verify')
+        ));
+        assertSame(2, count($verifyCalls), '再同期でも本人確認をやり直すこと');
+    });
+
+    test('クライアントがtrueを偽装しても、サーバーがfalseなら予約不可', function (): void {
+        resetRequestState();
+        $http = new FakeHttpClient();
+        $http->responses = [liffVerifyResponse(), liffFriendshipResponse(false)];
+        $app = makeApp([], $http);
+        $slotId = Fixtures::slot($app, Fixtures::page($app, ['slug' => 'resync']));
+
+        $csrf = $app->session->csrfToken();
+        $result = json_decode(request($app, 'POST', '/auth/liff/session', [
+            'csrf_token' => $csrf,
+            'id_token' => 'raw.id.token',
+            'access_token' => 'raw-access-token',
+            // 画面が「追加済み」を主張しても無視される
+            'friendFlag' => 'true',
+            'is_line_friend' => '1',
+            'friendship_confirmed' => '1',
+        ])->body, true);
+
+        assertSame(false, $result['is_line_friend']);
+        assertSame(0, (int) $app->users->findByLineUserId('U-liff-user-0001')['is_line_friend']);
+        assertNotContains('id="reserve-form"', request($app, 'GET', '/reserve/resync')->body);
+    });
+
+    test('クライアントスクリプトが正しい順序で再同期する', function (): void {
+        $js = (string) file_get_contents(dirname(__DIR__) . '/public/assets/liff.js');
+
+        // requestFriendship の結果だけで進めず、getFriendship で確認する
+        assertContains('liff.requestFriendship()', $js);
+        assertContains('liff.getFriendship()', $js);
+        // 確認後にサーバーへ投げ直す
+        assertContains('postSession(idToken, accessToken)', $js);
+        // クライアントの判定でDBを更新しない（friendFlagを送らない）
+        assertNotContains('friendFlag=', $js, 'friendFlagをサーバーへ送らない');
+        assertNotContains('is_line_friend=', $js);
+        // 無限ループ防止
+        assertContains('bouncedBackFrom', $js);
+        assertContains('attemptedLogin', $js);
+    });
+});

@@ -15,6 +15,11 @@ use App\Http\Response;
 use App\Http\SecurityHeaders;
 use App\Support\ConfigError;
 
+// ⚠ 本番XSERVERでは public のドキュメントルートと app-root が別ディレクトリのため、
+//    この1行を本番固有の絶対パスに書き換えてある。
+//    例: $root = '/home/<account>/yunoizumi.com/rakko-app';
+//    このファイルを差し替えるときは、必ず本番の $root を維持すること。
+//    リポジトリの dirname(__DIR__) をそのまま上書きすると bootstrap が壊れる。
 $root = dirname(__DIR__);
 
 // ビルトインサーバー（php -S ... public/index.php）は全リクエストをこのファイルへ渡すため、

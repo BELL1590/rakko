@@ -33,8 +33,23 @@ final class BookingController
     ) {
     }
 
-    private static function loginUrlFor(string $path): string
+    /**
+     * 未ログイン時の誘導先。
+     *
+     * LIFFを設定してあるときは /liff を優先する。
+     * 新しい端末・ブラウザには rk_session が無いため、
+     * 通常のOAuthだと「LINEアプリにログイン済みなのに毎回ログインし直し」になる。
+     * LIFFならLINEアプリのログイン状態からその端末用のセッションを作れる。
+     *
+     * LIFFが使えない場合（未設定・JS無効・初期化失敗・PC）は、
+     * /liff の画面から既存の /login へ進める。
+     * /liff のフォールバックは /login を直接指すので、ここへ戻ってループしない。
+     */
+    private function loginUrlFor(string $path): string
     {
+        if ($this->config->hasLiff()) {
+            return '/liff?redirect_to=' . rawurlencode($path) . '&msg=login_required';
+        }
         return '/login?redirect_to=' . rawurlencode($path) . '&msg=login_required';
     }
 
@@ -61,7 +76,7 @@ final class BookingController
         if ($qs !== '') {
             $target .= '?' . $qs;
         }
-        return Response::redirect(self::loginUrlFor($target));
+        return Response::redirect($this->loginUrlFor($target));
     }
 
     /**
@@ -147,7 +162,7 @@ final class BookingController
                 ? (int) $user['is_line_friend']
                 : null,
             $loggedIn,
-            self::loginUrlFor('/reserve/' . $slug),
+            $this->loginUrlFor('/reserve/' . $slug),
             $now,
             Messages::fromCode($request->query('msg')),
             $this->config->lineFriendUrl(),
@@ -204,7 +219,7 @@ final class BookingController
                         ? (int) $user['is_line_friend']
                         : null,
                     true,
-                    self::loginUrlFor('/reserve/' . $slug),
+                    $this->loginUrlFor('/reserve/' . $slug),
                     $now,
                     ['type' => 'error', 'message' => $result['message']],
                     $this->config->lineFriendUrl(),

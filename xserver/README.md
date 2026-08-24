@@ -457,6 +457,19 @@ find app bin public tests -name '*.php' -print0 | xargs -0 -n1 php8.0 -l
 /home/<account>/yunoizumi.com/public_html/   ← 既存サイト。触らない
 ```
 
+> **⚠ `public/index.php` を差し替えるときの注意**
+>
+> 本番はドキュメントルートと `app-root` が別ディレクトリのため、
+> `public/index.php` 冒頭の `$root` を**本番固有の絶対パス**に書き換えてあります。
+>
+> ```php
+> $root = '/home/<account>/yunoizumi.com/rakko-app';   // 本番の値
+> ```
+>
+> リポジトリ版は `$root = dirname(__DIR__);` です。
+> **そのまま上書きすると bootstrap が壊れて全ページが500になります。**
+> このファイルを反映するときは、必ず本番の `$root` を維持してください。
+
 `xserver/public/` の中身を `public_html/` へ、それ以外を `app-root/` へ配置します。
 `public/index.php` は `dirname(__DIR__)` を参照するため、
 `public_html` と `app-root` を並べる構成では index.php 冒頭の `$root` を
