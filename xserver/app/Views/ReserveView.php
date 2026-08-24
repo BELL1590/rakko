@@ -155,7 +155,12 @@ final class ReserveView
                 'title' => (string) $page['title'] . ' | 予約',
                 'userName' => $userName,
                 'alert' => $alert,
-                'bodyEnd' => $loggedIn ? '<script src="/assets/reserve.js" defer></script>' : '',
+                // 未ログイン時も枠カードは表示するため、人数選択に応じた
+                // 同行者欄の表示切り替え（syncBlock）だけは常に動かす必要がある。
+                // reserve.js 側は #reserve-form が無ければ送信・確認CTA等の
+                // 初期化をせず即returnする設計にしてあるので、
+                // ログイン状態に関わらず常に読み込んでよい。
+                'bodyEnd' => '<script src="/assets/reserve.js" defer></script>',
             ],
             $content
         );
