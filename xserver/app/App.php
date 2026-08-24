@@ -155,6 +155,10 @@ final class App
         $router->get('/login', fn (Request $r, array $p) => $this->authController()->loginPage($r));
         $router->post('/auth/line/start', fn (Request $r, array $p) => $this->authController()->lineStart($r));
         $router->get('/auth/line/callback', fn (Request $r, array $p) => $this->authController()->lineCallback($r));
+        $router->get('/liff', fn (Request $r, array $p) => $this->authController()->liffPage($r, $p));
+        // LIFF URL の追加パス（liff.line.me/{LIFF_ID}/reserve/{slug}）で予約slugを維持する
+        $router->get('/liff/reserve/{slug}', fn (Request $r, array $p) => $this->authController()->liffPage($r, $p));
+        $router->post('/auth/liff/session', fn (Request $r, array $p) => $this->authController()->liffSession($r));
         $router->post('/auth/demo/login', fn (Request $r, array $p) => $this->authController()->demoLogin($r));
         $router->post('/logout', fn (Request $r, array $p) => $this->authController()->logout($r));
 

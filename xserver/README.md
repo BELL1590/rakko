@@ -259,6 +259,47 @@ LINEログイン
 - **管理者代理予約（`source=admin`）は対象外**です。LINEを使わないため。
 - `requires_line_login = 0` のページも対象外です（LINEアカウント自体が無いため）。
 
+### LIFF（新しい端末・ブラウザでのログイン導線）
+
+LINE Login成功後に発行するのは `rk_session` Cookieなので、
+**新しい端末・ブラウザでは、同じLINEアカウントでLINEアプリにログイン済みでも
+Cookieが無く未ログイン扱い**になります。
+そこで公開予約の推奨導線としてLIFFを追加しています。
+
+```
+新しいスマートフォン
+  ↓ 予約用LIFF URL（https://liff.line.me/{LIFF_ID}[/reserve/{slug}]）
+LINEアプリ / LIFFブラウザ
+  ↓ liff.init({ liffId, withLoginOnExternalBrowser: true })
+LINE本人確認
+  ↓ raw ID token を POST /auth/liff/session
+サーバーが LINE Platform で検証（POST /oauth2/v2.1/verify）
+  ↓ 検証済み sub で既存ユーザーを特定
+rk_session をその端末に発行
+  ↓ friendship status をサーバー側で取得
+未追加なら liff.requestFriendship() で追加を促す
+  ↓ 追加済み
+予約フォーム → 予約 → 通知 → 通知URLから予約詳細
+```
+
+- **認証の境界はサーバー側の raw ID token 検証ただ一点**です。
+  画面から送られる `userId` / `displayName` / `friendFlag` や
+  `getDecodedIDToken()` の内容は**一切信用しません**。検証済みの `sub` だけを使います。
+- ID token / access token は**DBにもログにも保存しません**。
+- 友だち状態も**サーバー側で取り直して** `users.is_line_friend` に保存します。
+  取得できなければ `NULL` のまま＝未追加扱い（fail closed）。
+  最終的な予約可否は従来どおり `BookingService` がDBの値で判定します。
+- `liff.login()` は**1リクエストにつき1回まで**に制限し、無限リダイレクトを防いでいます
+  （`sessionStorage` のフラグ。使えない環境では試行しない）。
+- **既存のLINE Login（OAuth/OIDC）は削除していません。** LIFF非対応環境・PC・
+  JS無効・LIFF初期化失敗のフォールバックとして維持します。
+  `/liff` のHTMLには最初から `/login` へのリンクと `<noscript>` を置いてあるので、
+  JSが動かなくても行き止まりになりません。
+
+CSPは `/liff` のときだけ、LIFF SDKの配信元（`https://static.line-scdn.net`）と
+LINEのAPI（`https://api.line.me`）を追加で許可します。他のページの
+CSPは従来どおり絞ったままです。
+
 ### スマートフォンでのLINEアプリ起動（auto login）
 
 LINEの auto login は、こちら側で有効化する設定ではありません。
@@ -439,6 +480,7 @@ PHPバージョンもアカウント全体で 8.0.30 のまま変更しないの
 | `LINE_LOGIN_CHANNEL_ID` / `_SECRET` | **必須。** LINE Developers の LINE Login チャネル。**予約専用LINE公式アカウントとリンク済みであること**（6-8参照） |
 | `LINE_MESSAGING_CHANNEL_ACCESS_TOKEN` | **必須。** 予約専用LINE公式アカウントのMessaging APIチャネルの長期アクセストークン。予約完了通知・リマインドをこのアカウントから送ります |
 | `LINE_FRIEND_URL` | **設定推奨。** 予約専用LINE公式アカウントの友だち追加URL（`https://lin.ee/xxxxxxx` など）。未追加の利用者にこのリンクを案内します。未設定でもフローは動きますが、利用者が自力で検索する必要があります。**LINE Loginチャネルにリンクしたアカウントと同一のものを指定してください** |
+| `LINE_LIFF_ID` | **設定推奨。** LINE Loginチャネルに追加したLIFFアプリのID（例 `2001234567-AbCdEfGh`）。新しい端末・ブラウザでもLINEアプリのログイン状態からWebセッションを作れます。未設定でも既存のLINE Loginだけで動作します |
 | `LINE_LOGIN_BOT_PROMPT` | **任意。** 空 = 送らない（既定）。`normal` / `aggressive` のみ指定可。リンク設定が未完了のまま設定すると authorize が400になりログインできません。※任意なのはこのパラメータだけで、**リンク設定自体は必須**です |
 | `ADMIN_USERNAME` | 管理者ユーザー名 |
 | `ADMIN_PASSWORD_HASH` | `php -r 'echo password_hash("パスワード", PASSWORD_DEFAULT);'` の出力 |
@@ -505,6 +547,31 @@ XSERVER の Cron は実行結果をメール通知します。不要なら末尾
 
 （既存の「草加健康センター公式アカウント」とは**別の予約専用アカウント**を使う想定です。
 別アカウントのトークンやURLを混ぜると、通知先と友だち判定の対象がずれます）
+
+#### LIFFアプリの追加（設定推奨）
+
+新しい端末・ブラウザでのログイン導線に使います。
+
+1. LINE Developers コンソール → **既存のLINE Loginチャネル** → 「LIFF」タブ →「追加」
+2. 設定値:
+   - **エンドポイントURL**: `https://reserve.yunoizumi.com/liff`
+   - **サイズ**: `Full`（予約フォームまで表示するため）
+   - **スコープ**: `openid` と `profile` にチェック
+   - **ボット連携機能**: 「On (Aggressive)」または「On (Normal)」
+     （`liff.requestFriendship()` で友だち追加を促すために必要）
+3. 発行された **LIFF ID**（`2001234567-AbCdEfGh` 形式）を控える
+   - LIFFタブの一覧、または「LIFF URL」`https://liff.line.me/{LIFF_ID}` の末尾部分
+4. `config.local.php` の `LINE_LIFF_ID` に設定する
+
+予約ページへの共有用URL:
+
+| 用途 | URL |
+|---|---|
+| トップ | `https://liff.line.me/{LIFF_ID}` |
+| 特定の予約ページ | `https://liff.line.me/{LIFF_ID}/reserve/{slug}` |
+
+生の `https://reserve.yunoizumi.com/reserve/{slug}` を共有した場合も、
+従来のWeb LINE Loginで予約できます（fallback）。
 
 #### そのほかの設定
 

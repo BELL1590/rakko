@@ -30,14 +30,17 @@ if (PHP_SAPI === 'cli-server') {
 
 require_once $root . '/app/bootstrap.php';
 
+$request = Request::fromGlobals();
+
 // セキュリティヘッダ（Workers版 secureHeaders 相当）。
 // 内容は App\Http\SecurityHeaders に定義し、テストから検証できるようにしている。
-SecurityHeaders::send();
+// LIFFブートストラップ画面だけ、LIFF SDKとLINE APIのオリジンを追加で許可する。
+SecurityHeaders::send(SecurityHeaders::needsLiff($request->path));
 
 try {
     $boot = rakko_boot();
     $app = new App($boot['config'], $boot['db']);
-    $response = $app->handle(Request::fromGlobals());
+    $response = $app->handle($request);
 } catch (ConfigError $e) {
     $response = Response::text('Configuration error: ' . $e->getMessage(), 500);
 } catch (\Throwable $e) {

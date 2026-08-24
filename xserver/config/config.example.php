@@ -54,6 +54,14 @@ return [
     // ※ 任意なのはこのパラメータを送るかどうかだけで、リンク設定自体は必須。
     'LINE_LOGIN_BOT_PROMPT' => '',
 
+    // LIFFアプリのID（LINE Loginチャネルに追加したLIFFアプリ）。（設定推奨）
+    // 例: '2001234567-AbCdEfGh'
+    // 設定すると /liff で LIFF 経由のログイン導線が使えるようになり、
+    // 新しい端末・ブラウザでもLINEアプリのログイン状態からWebセッションを作れる。
+    // 未設定でも既存のLINE Login（OAuth/OIDC）だけで動作する。
+    // Endpoint URL は https://<本番ドメイン>/liff、scope は openid + profile。
+    'LINE_LIFF_ID' => '',
+
     // --- LINE Messaging API Channel ---（必須）
     // 予約専用LINE公式アカウントのMessaging APIチャネルの長期アクセストークン。
     // 予約完了通知・リマインドをこのアカウントから送る。

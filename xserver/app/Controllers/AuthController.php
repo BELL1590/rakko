@@ -11,6 +11,7 @@ use App\Http\Response;
 use App\Repositories\UserRepository;
 use App\Support\Config;
 use App\Support\Messages;
+use App\Views\LiffView;
 use App\Views\LoginView;
 
 /**
@@ -122,6 +123,105 @@ final class AuthController
             // アクセストークン等が混入しないよう、詳細はログに残さない
             return Response::redirect('/login?msg=login_failed');
         }
+    }
+
+    /**
+     * LIFF のブートストラップ画面。
+     *
+     * 新しい端末・ブラウザには rk_session が無いため、
+     * LINEアプリのログイン状態からWebセッションを作る導線として使う。
+     * LIFFが使えない環境では既存のLINE Login（OAuth/OIDC）へ誘導する。
+     */
+    public function liffPage(Request $request, array $params = []): Response
+    {
+        // ログイン後の戻り先の決め方（優先順）:
+        //   1. LIFF URLの追加パス（例 liff.line.me/{id}/reserve/{slug}）
+        //   2. 明示的な redirect_to
+        //   3. liff.state（LINEが追加パス／クエリを載せてくる）
+        $slug = $params['slug'] ?? null;
+        $fromPath = $slug !== null && $slug !== '' ? '/reserve/' . $slug : null;
+
+        $redirectTo = Session::safeRedirectPath(
+            $fromPath ?? $request->query('redirect_to') ?? $request->query('liff.state'),
+            '/'
+        );
+
+        return Response::html(LiffView::render(
+            $this->config->liffId(),
+            $redirectTo,
+            $this->session->csrfToken(),
+            $this->config->hasLineLogin(),
+            Messages::fromCode($request->query('msg')),
+        ));
+    }
+
+    /**
+     * LIFF から受け取った raw token を検証してセッションを発行する。
+     *
+     * クライアントが送ってくる userId / displayName / friendFlag は**信用しない**。
+     * ID token を LINE Platform で検証し、その `sub` だけを本人の識別子として使う。
+     * トークンはDBにもログにも残さない。
+     */
+    public function liffSession(Request $request): Response
+    {
+        if (!$this->session->verifyCsrf($request->input('csrf_token'))) {
+            return Response::json(['ok' => false, 'error' => 'csrf'], 400);
+        }
+        if ($this->line === null || !$this->config->hasLineLogin()) {
+            return Response::json(['ok' => false, 'error' => 'line_not_configured'], 400);
+        }
+
+        $idToken = trim($request->str('id_token'));
+        if ($idToken === '') {
+            return Response::json(['ok' => false, 'error' => 'id_token_required'], 400);
+        }
+        $accessToken = trim($request->str('access_token'));
+
+        try {
+            // ここが唯一の本人確認。以降はこの claims だけを信じる
+            $claims = $this->line->verifyIdTokenViaApi($idToken);
+        } catch (\Throwable) {
+            // 失敗理由にトークンを含めない
+            return Response::json(['ok' => false, 'error' => 'invalid_token'], 401);
+        }
+
+        $lineUserId = (string) $claims['sub'];
+        $displayName = isset($claims['name']) && is_string($claims['name']) ? $claims['name'] : '';
+        $pictureUrl = isset($claims['picture']) && is_string($claims['picture'])
+            ? $claims['picture']
+            : null;
+
+        // 友だち状態もサーバー側で取り直す。
+        // 画面から送られた friendFlag は判断材料にしない。
+        // 取得できなければ null のまま（＝未追加扱い。予約はブロックされる）
+        $isFriend = null;
+        if ($accessToken !== '') {
+            try {
+                $isFriend = $this->line->fetchFriendshipStatus($accessToken);
+            } catch (\Throwable) {
+                $isFriend = null;
+            }
+        }
+
+        if ($displayName === '' && $accessToken !== '') {
+            try {
+                $profile = $this->line->fetchProfile($accessToken);
+                $displayName = (string) ($profile['displayName'] ?? '');
+                $pictureUrl ??= isset($profile['pictureUrl']) ? (string) $profile['pictureUrl'] : null;
+            } catch (\Throwable) {
+                // 表示名が取れなくてもログインは成立させる
+            }
+        }
+
+        // トークンは保存しない。保存するのはLINEユーザーIDと表示名・友だち状態だけ
+        $user = $this->users->upsertByLineId($lineUserId, $displayName, $pictureUrl, $isFriend);
+        $this->session->startUserSession((int) $user['id']);
+
+        return Response::json([
+            'ok' => true,
+            'redirect_to' => Session::safeRedirectPath($request->str('redirect_to'), '/'),
+            'is_line_friend' => $isFriend,
+        ]);
     }
 
     /** DEMO_MODE 専用の疑似ログイン。production では絶対に有効化されない。 */
