@@ -1,31 +1,10 @@
 (function () {
-  var form = document.getElementById('reserve-form');
-  if (!form) return;
-
-  var blocks = Array.prototype.slice.call(form.querySelectorAll('[data-slot-block]'));
-  var panel = form.querySelector('[data-confirm-panel]');
-  // sticky CTA は position:fixed の下部固定バーで、</form> の外に描画されている。
-  // form.querySelector で探すと必ず null になり、
-  // 「確認パネルは hidden、CTA も出ない」＝送信手段ゼロになるため document から探す。
-  var sticky = document.querySelector('[data-sticky-cta]');
-  var openBtn = document.querySelector('[data-open-confirm]');
-  var dismissBtn = document.getElementById('confirm-dismiss');
-  var nameInput = document.getElementById('representative_name');
-  var phoneInput = document.getElementById('phone');
-  var agreedInput = document.getElementById('agreed');
-
-  // JSが有効なときだけ段階的にUIを絞る。
-  // サーバー側は同行者欄を hidden にしていないので、JS無効なら
-  // 「全枠の人数ラジオ＋最大人数分の同行者欄＋確認セクション」が
-  // すべて見える従来のフォーム1枚として成立する。
-  //
-  // 確認パネルを隠してよいのは、代わりの導線（sticky CTA と開くボタン）が
-  // 揃っているときだけ。片方でも欠けたら隠さない。
-  // 隠したうえで代替導線も出せないと、送信ボタンへ到達する手段が無くなる。
-  var hasStickyPath = !!(sticky && openBtn);
-  if (panel && hasStickyPath) panel.hidden = true;
-  if (hasStickyPath) sticky.hidden = false;
-  if (dismissBtn && hasStickyPath) dismissBtn.hidden = false;
+  // 枠カード（data-slot-block）は未ログイン時にも表示される
+  // （ログインを促す前に、どんな枠があるか見せるため）。
+  // そのため人数選択に応じた同行者欄の表示切り替えは、
+  // #reserve-form の有無に関係なく常に動かす必要がある。
+  // document から探すことで、フォームの外にある枠カードにも対応する。
+  var blocks = Array.prototype.slice.call(document.querySelectorAll('[data-slot-block]'));
 
   function partySize(block) {
     var checked = block.querySelector('input[type="radio"]:checked');
@@ -69,6 +48,78 @@
   function selectedBlocks() {
     return blocks.filter(isSelected);
   }
+
+  function copyCompanions(source) {
+    var values = companionInputs(source).map(function (input) { return input.value; });
+    var size = partySize(source);
+    blocks.forEach(function (block) {
+      if (block === source || !isSelected(block)) return;
+      if (partySize(block) !== size) return;
+      companionInputs(block).forEach(function (input, i) {
+        if (input.dataset.touched === '1') return;
+        if (values[i] !== undefined) input.value = values[i];
+      });
+    });
+  }
+
+  // onSlotChange は枠選択・人数・同行者の変更のたびに呼ばれる。
+  // #reserve-form があるログイン済みフローでは sticky CTA の再同期に差し替える
+  // （下の form 分岐内で上書きする）。フォームが無い場合は syncBlock だけで十分。
+  var onSlotChange = function () {};
+
+  blocks.forEach(function (block) {
+    var toggle = block.querySelector('[data-slot-toggle]');
+    if (toggle) {
+      toggle.addEventListener('change', function () { syncBlock(block); onSlotChange(); });
+    }
+    Array.prototype.slice.call(block.querySelectorAll('input[type="radio"]')).forEach(
+      function (radio) {
+        radio.addEventListener('change', function () { syncBlock(block); onSlotChange(); });
+      },
+    );
+    Array.prototype.slice.call(block.querySelectorAll('.companion-field input')).forEach(
+      function (input) {
+        input.addEventListener('input', function () {
+          input.dataset.touched = '1';
+          copyCompanions(block);
+          onSlotChange();
+        });
+      },
+    );
+  });
+
+  // 人数選択に応じた同行者欄の表示は、ログイン状態に関係なく初期表示から揃える。
+  blocks.forEach(syncBlock);
+
+  // ここから先（sticky CTA・確認パネル・代表者入力・送信）は
+  // 予約フォームがあるとき、つまりログイン済みで実際に送信できるときだけ動かす。
+  // 未ログイン時は #reserve-form 自体が存在しないため、ここで抜ける。
+  var form = document.getElementById('reserve-form');
+  if (!form) return;
+
+  var panel = form.querySelector('[data-confirm-panel]');
+  // sticky CTA は position:fixed の下部固定バーで、</form> の外に描画されている。
+  // form.querySelector で探すと必ず null になり、
+  // 「確認パネルは hidden、CTA も出ない」＝送信手段ゼロになるため document から探す。
+  var sticky = document.querySelector('[data-sticky-cta]');
+  var openBtn = document.querySelector('[data-open-confirm]');
+  var dismissBtn = document.getElementById('confirm-dismiss');
+  var nameInput = document.getElementById('representative_name');
+  var phoneInput = document.getElementById('phone');
+  var agreedInput = document.getElementById('agreed');
+
+  // JSが有効なときだけ段階的にUIを絞る。
+  // サーバー側は同行者欄を hidden にしていないので、JS無効なら
+  // 「全枠の人数ラジオ＋最大人数分の同行者欄＋確認セクション」が
+  // すべて見える従来のフォーム1枚として成立する。
+  //
+  // 確認パネルを隠してよいのは、代わりの導線（sticky CTA と開くボタン）が
+  // 揃っているときだけ。片方でも欠けたら隠さない。
+  // 隠したうえで代替導線も出せないと、送信ボタンへ到達する手段が無くなる。
+  var hasStickyPath = !!(sticky && openBtn);
+  if (panel && hasStickyPath) panel.hidden = true;
+  if (hasStickyPath) sticky.hidden = false;
+  if (dismissBtn && hasStickyPath) dismissBtn.hidden = false;
 
   function missingLabels() {
     var missing = [];
@@ -185,39 +236,8 @@
     if (countEl) countEl.textContent = picked.length + '件 / 計' + total + '名';
   }
 
-  blocks.forEach(function (block) {
-    var toggle = block.querySelector('[data-slot-toggle]');
-    if (toggle) {
-      toggle.addEventListener('change', function () { syncBlock(block); syncSticky(); });
-    }
-    Array.prototype.slice.call(block.querySelectorAll('input[type="radio"]')).forEach(
-      function (radio) {
-        radio.addEventListener('change', function () { syncBlock(block); syncSticky(); });
-      },
-    );
-    Array.prototype.slice.call(block.querySelectorAll('.companion-field input')).forEach(
-      function (input) {
-        input.addEventListener('input', function () {
-          input.dataset.touched = '1';
-          copyCompanions(block);
-          syncSticky();
-        });
-      },
-    );
-  });
-
-  function copyCompanions(source) {
-    var values = companionInputs(source).map(function (input) { return input.value; });
-    var size = partySize(source);
-    blocks.forEach(function (block) {
-      if (block === source || !isSelected(block)) return;
-      if (partySize(block) !== size) return;
-      companionInputs(block).forEach(function (input, i) {
-        if (input.dataset.touched === '1') return;
-        if (values[i] !== undefined) input.value = values[i];
-      });
-    });
-  }
+  // 枠選択・人数・同行者の変更で sticky CTA を再同期する（フォームがある場合のみ）
+  onSlotChange = syncSticky;
 
   [nameInput, phoneInput].forEach(function (input) {
     if (input) input.addEventListener('input', syncSticky);
@@ -243,7 +263,6 @@
     });
   }
 
-  blocks.forEach(syncBlock);
   syncSticky();
 
   var submitting = false;
