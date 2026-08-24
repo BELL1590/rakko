@@ -15,6 +15,11 @@ use App\Http\Response;
 use App\Http\SecurityHeaders;
 use App\Support\ConfigError;
 
+// ⚠ 本番XSERVERでは public のドキュメントルートと app-root が別ディレクトリのため、
+//    この1行を本番固有の絶対パスに書き換えてある。
+//    例: $root = '/home/<account>/yunoizumi.com/rakko-app';
+//    このファイルを差し替えるときは、必ず本番の $root を維持すること。
+//    リポジトリの dirname(__DIR__) をそのまま上書きすると bootstrap が壊れる。
 $root = dirname(__DIR__);
 
 // ビルトインサーバー（php -S ... public/index.php）は全リクエストをこのファイルへ渡すため、
@@ -30,14 +35,17 @@ if (PHP_SAPI === 'cli-server') {
 
 require_once $root . '/app/bootstrap.php';
 
+$request = Request::fromGlobals();
+
 // セキュリティヘッダ（Workers版 secureHeaders 相当）。
 // 内容は App\Http\SecurityHeaders に定義し、テストから検証できるようにしている。
-SecurityHeaders::send();
+// LIFFブートストラップ画面だけ、LIFF SDKとLINE APIのオリジンを追加で許可する。
+SecurityHeaders::send(SecurityHeaders::needsLiff($request->path));
 
 try {
     $boot = rakko_boot();
     $app = new App($boot['config'], $boot['db']);
-    $response = $app->handle(Request::fromGlobals());
+    $response = $app->handle($request);
 } catch (ConfigError $e) {
     $response = Response::text('Configuration error: ' . $e->getMessage(), 500);
 } catch (\Throwable $e) {

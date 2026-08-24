@@ -18,6 +18,12 @@ final class SecurityHeaders
     /** LINEプロフィール画像の配信元。 */
     public const LINE_PROFILE_ORIGIN = 'https://profile.line-scdn.net';
 
+    /** LIFF SDK v2 の配信元。 */
+    public const LIFF_SDK_ORIGIN = 'https://static.line-scdn.net';
+
+    /** LIFF SDK が通信するLINEのAPIオリジン。 */
+    public const LINE_API_ORIGIN = 'https://api.line.me';
+
     /**
      * Content-Security-Policy の値。
      *
@@ -29,17 +35,34 @@ final class SecurityHeaders
      *   ブラウザがこの遷移をブロックし、ログインできない。
      * - ワイルドカードは使わない。許可先は必要なオリジンのみ列挙する。
      */
-    public static function contentSecurityPolicy(): string
+    public static function contentSecurityPolicy(bool $withLiff = false): string
     {
+        // LIFF SDK は外部スクリプトで、LINEのAPIへXHRする。
+        // これを全ページで許可すると必要以上に緩くなるので、
+        // LIFFブートストラップ画面のときだけ、必要なオリジンを足す。
+        $scriptSrc = "script-src 'self' 'unsafe-inline'";
+        $connectSrc = "connect-src 'self'";
+        if ($withLiff) {
+            $scriptSrc .= ' ' . self::LIFF_SDK_ORIGIN;
+            $connectSrc .= ' ' . self::LINE_API_ORIGIN . ' ' . self::LINE_AUTHORIZE_ORIGIN;
+        }
+
         return implode('; ', [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline'",
+            $scriptSrc,
             "style-src 'self' 'unsafe-inline'",
             "img-src 'self' " . self::LINE_PROFILE_ORIGIN . ' data:',
+            $connectSrc,
             "form-action 'self' " . self::LINE_AUTHORIZE_ORIGIN,
             "frame-ancestors 'none'",
             "base-uri 'self'",
         ]);
+    }
+
+    /** このパスでLIFF用の緩和が必要か。 */
+    public static function needsLiff(string $path): bool
+    {
+        return $path === '/liff';
     }
 
     /**
@@ -47,20 +70,20 @@ final class SecurityHeaders
      *
      * @return array<string, string>
      */
-    public static function all(): array
+    public static function all(bool $withLiff = false): array
     {
         return [
             'X-Content-Type-Options' => 'nosniff',
             'X-Frame-Options' => 'DENY',
             'Referrer-Policy' => 'strict-origin-when-cross-origin',
-            'Content-Security-Policy' => self::contentSecurityPolicy(),
+            'Content-Security-Policy' => self::contentSecurityPolicy($withLiff),
         ];
     }
 
     /** 実際にHTTPへ送出する。 */
-    public static function send(): void
+    public static function send(bool $withLiff = false): void
     {
-        foreach (self::all() as $name => $value) {
+        foreach (self::all($withLiff) as $name => $value) {
             header($name . ': ' . $value);
         }
     }

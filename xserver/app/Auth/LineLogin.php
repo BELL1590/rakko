@@ -23,6 +23,7 @@ final class LineLogin
     private const TOKEN_ENDPOINT = 'https://api.line.me/oauth2/v2.1/token';
     private const PROFILE_ENDPOINT = 'https://api.line.me/v2/profile';
     private const FRIENDSHIP_ENDPOINT = 'https://api.line.me/friendship/v1/status';
+    private const VERIFY_ENDPOINT = 'https://api.line.me/oauth2/v2.1/verify';
 
     public function __construct(
         private Config $config,
@@ -74,6 +75,74 @@ final class LineLogin
         }
 
         return self::AUTHORIZE_ENDPOINT . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+    }
+
+    /**
+     * ID token を LINE Platform で検証する（サーバー側検証）。
+     *
+     * LIFF から受け取った raw ID token の検証に使う。
+     * ローカルでの署名検証（verifyIdToken）は HS256 前提だが、
+     * LIFF/チャネル設定によっては ES256 で発行されるため、
+     * LINE公式の検証エンドポイントへ投げて判定する。
+     *
+     * このメソッドは「クライアントの申告値を信用しない」ための境界。
+     * 戻り値の claims だけを信頼し、画面から送られた userId や
+     * displayName、getDecodedIDToken() の内容は一切使わない。
+     *
+     * @param string|null $nonce 照合する nonce（LIFFでは発行しないので通常null）
+     * @return array<string, mixed> 検証済み claims
+     * @throws LineLoginError 検証に失敗した場合
+     */
+    public function verifyIdTokenViaApi(
+        string $idToken,
+        ?string $nonce = null,
+        ?int $nowSeconds = null
+    ): array {
+        $nowSeconds ??= time();
+        $channelId = $this->config->str('LINE_LOGIN_CHANNEL_ID');
+
+        $response = $this->http->post(
+            self::VERIFY_ENDPOINT,
+            http_build_query([
+                'id_token' => $idToken,
+                // client_id を渡すと LINE 側でも aud を検証してくれる
+                'client_id' => $channelId,
+            ]),
+            ['Content-Type' => 'application/x-www-form-urlencoded']
+        );
+
+        if ($response['status'] < 200 || $response['status'] >= 300) {
+            // 本文にトークンは含めない
+            throw new LineLoginError('id_token verification failed (HTTP ' . $response['status'] . ')');
+        }
+
+        $claims = json_decode($response['body'], true);
+        if (!is_array($claims)) {
+            throw new LineLoginError('malformed id_token verification response');
+        }
+
+        // LINE側の検証に加えて、こちらでも必ず確認する（多層防御）
+        if (($claims['iss'] ?? null) !== 'https://access.line.me') {
+            throw new LineLoginError('invalid id_token issuer');
+        }
+        if (!hash_equals($channelId, (string) ($claims['aud'] ?? ''))) {
+            throw new LineLoginError('invalid id_token audience');
+        }
+        if (!isset($claims['exp']) || !is_int($claims['exp']) || $claims['exp'] < $nowSeconds) {
+            throw new LineLoginError('expired id_token');
+        }
+        if (!isset($claims['sub']) || !is_string($claims['sub']) || $claims['sub'] === '') {
+            throw new LineLoginError('id_token has no subject');
+        }
+        if ($nonce !== null) {
+            if (!isset($claims['nonce']) || !is_string($claims['nonce'])
+                || !hash_equals($nonce, $claims['nonce'])
+            ) {
+                throw new LineLoginError('invalid id_token nonce');
+            }
+        }
+
+        return $claims;
     }
 
     /**

@@ -178,6 +178,50 @@ final class Config
     }
 
     /**
+     * LIFFアプリのID。未設定なら null（LIFF導線を出さない）。
+     *
+     * LIFFは既存のLINE Login（OAuth/OIDC）を置き換えるものではなく、
+     * 新しい端末・ブラウザでもLINEアプリのログイン状態から
+     * Webセッションを作れるようにするための追加導線。
+     * 未設定でも既存フローだけで予約は成立する。
+     */
+    public function liffId(): ?string
+    {
+        $id = trim($this->str('LINE_LIFF_ID'));
+        // LIFF IDは「数字-英数字」形式。想定外の値はリンクを出さない
+        if ($id === '' || preg_match('/^[0-9]{6,12}-[0-9a-zA-Z]{4,16}$/', $id) !== 1) {
+            return null;
+        }
+        return $id;
+    }
+
+    public function hasLiff(): bool
+    {
+        return $this->liffId() !== null;
+    }
+
+    /**
+     * 共有用のLIFF URL。未設定なら null。
+     *
+     * `https://liff.line.me/{LIFF_ID}` が基本形で、
+     * 追加パスを付けると Endpoint URL の後ろに連結されて渡る。
+     * 例: liffUrl('/reserve/rakko-ikebukuro')
+     *     → https://liff.line.me/{LIFF_ID}/reserve/rakko-ikebukuro
+     */
+    public function liffUrl(?string $path = null): ?string
+    {
+        $id = $this->liffId();
+        if ($id === null) {
+            return null;
+        }
+        $suffix = '';
+        if ($path !== null && $path !== '' && $path !== '/') {
+            $suffix = '/' . ltrim($path, '/');
+        }
+        return 'https://liff.line.me/' . $id . $suffix;
+    }
+
+    /**
      * 予約専用LINE公式アカウントの友だち追加URL。未設定なら null。
      * https:// 以外は誤設定として扱い、リンクにしない。
      *
