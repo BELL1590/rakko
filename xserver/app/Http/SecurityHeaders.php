@@ -62,7 +62,7 @@ final class SecurityHeaders
     /** このパスでLIFF用の緩和が必要か。 */
     public static function needsLiff(string $path): bool
     {
-        return $path === '/liff';
+        return $path === '/liff' || str_starts_with($path, '/liff/reserve/');
     }
 
     /**
