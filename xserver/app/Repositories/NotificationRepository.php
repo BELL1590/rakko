@@ -155,6 +155,67 @@ final class NotificationRepository
     }
 
     /**
+     * 予約完了通知の再試行候補。
+     *
+     * 一括予約は初回送信時に複数予約から1つの X-Line-Retry-Key を決定的に
+     * 導出しているため、グループの一部だけを再送すると retry key と本文が変わり、
+     * LINE側の重複排除が効かなくなる。そのためグループについては以下を満たす場合だけ返す。
+     *
+     * - 全予約が confirmed
+     * - requested / skipped が1件もない
+     * - 試行上限到達が1件もない
+     * - 現在送信中（staleではない sending）が1件もない
+     *
+     * `pending` / `failed` / stale `sending` は claim() が安全に再取得できる。
+     * 管理者代理予約・ユーザー紐付けなし・キャンセル済みは対象外。
+     *
+     * @return list<array{booking_id: int|string, booking_group_id: ?string}>
+     */
+    public function listRetryableBookingConfirmationTargets(string $now, int $maxAttempts): array
+    {
+        $staleBefore = $this->staleCutoff($now);
+
+        return $this->db->all(
+            'SELECT b.id AS booking_id, b.booking_group_id
+               FROM bookings b
+               JOIN notifications n
+                 ON n.booking_id = b.id AND n.notification_type = \'booking_confirmation\'
+              WHERE b.status = \'confirmed\'
+                AND b.source <> \'admin\'
+                AND b.user_id IS NOT NULL
+                AND n.attempt_count < ?
+                AND (n.status IN (\'pending\', \'failed\')
+                     OR (n.status = \'sending\' AND n.updated_at < ?))
+                AND (
+                    b.booking_group_id IS NULL
+                    OR (
+                        NOT EXISTS (
+                            SELECT 1
+                              FROM bookings bg
+                             WHERE bg.booking_group_id = b.booking_group_id
+                               AND bg.status <> \'confirmed\'
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1
+                              FROM bookings bg
+                              JOIN notifications ng
+                                ON ng.booking_id = bg.id
+                               AND ng.notification_type = \'booking_confirmation\'
+                             WHERE bg.booking_group_id = b.booking_group_id
+                               AND (
+                                   ng.status IN (\'requested\', \'skipped\')
+                                   OR ng.attempt_count >= ?
+                                   OR (ng.status = \'sending\' AND ng.updated_at >= ?)
+                               )
+                        )
+                    )
+                )
+              ORDER BY COALESCE(b.booking_group_id, CONCAT(\'single:\', b.id)), b.id',
+            [$maxAttempts, $staleBefore, $maxAttempts, $staleBefore]
+        );
+    }
+
+    /**
      * リマインド送信対象。
      * - reminder_at を過ぎた枠（NULLなら送らない）
      * - 開始前（開始済みの枠には送らない）
