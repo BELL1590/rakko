@@ -1,0 +1,66 @@
+name: XSERVER tests
+
+on:
+  pull_request:
+    paths:
+      - 'xserver/**'
+      - '.github/workflows/xserver-tests.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'xserver/**'
+      - '.github/workflows/xserver-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  xserver-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: root-test-password
+          MARIADB_DATABASE: rakko_test
+          MARIADB_USER: rakko
+          MARIADB_PASSWORD: rakko_test_pw
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP 8.0
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.0'
+          extensions: mbstring, pdo_mysql
+          coverage: none
+
+      - name: PHP syntax check
+        working-directory: xserver
+        run: find app bin public tests -name '*.php' -print0 | xargs -0 -n1 php -l
+
+      - name: JavaScript syntax check
+        working-directory: xserver
+        run: find public/assets -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: XSERVER test suite
+        working-directory: xserver
+        env:
+          RAKKO_DB_HOST: 127.0.0.1
+          RAKKO_DB_PORT: '3306'
+          RAKKO_DB_NAME: rakko_test
+          RAKKO_DB_USER: rakko
+          RAKKO_DB_PASSWORD: rakko_test_pw
+        run: php tests/run.php
