@@ -28,71 +28,127 @@ final class NotificationRepository
     }
 
     /**
-     * 通知の送信権を確保する。
-     *
-     * `pending` / `failed`（および放置された `sending`）から `sending` への
-     * 遷移を単一のUPDATEで行い、実際に行を更新できたプロセスだけが送信する。
-     * MySQL はUPDATEで行ロックを取ったあとにWHERE句を再評価するため、
-     * 同時に走った2つ目のUPDATEは `sending` になった行に一致せず 0 行となる。
-     *
-     * `claim_token` は claim のたびに変わる（送信権の排他用）が、
-     * `line_retry_key` は一度発行したら保持し続ける
-     * （同じ通知の再送だと LINE 側に伝えるため。COALESCE で上書きしない）。
+     * 通知1件の送信権を確保する。
+     * 複数件送信と同じ all-or-nothing 実装を使う。
      *
      * @return array{token: string, retry_key: string, attempt: int, first_attempt_at: string}|null
-     *         送信権を取れたら claim_token・LINE retry key・試行回数・初回試行時刻、
-     *         取れなければ null
      */
     public function claim(int $bookingId, string $type, int $maxAttempts, ?string $now = null): ?array
     {
+        $claims = $this->claimMany([$bookingId], $type, $maxAttempts, $now);
+        return $claims[$bookingId] ?? null;
+    }
+
+    /**
+     * 複数通知を all-or-nothing で原子的に claim する。
+     *
+     * 一括予約を1通にまとめて送る場合、予約ごとに順番に claim すると
+     * 2つのCronが同時実行された際に「Aが行き、Bが帰り」を別々にclaimできる。
+     * それを防ぐため、全通知行を1トランザクションで booking_id 昇順に FOR UPDATE し、
+     * **全件がclaim可能な場合だけ**全件を sending へ進める。
+     * 1件でも requested/skipped/上限到達/非stale sending なら0件claimする。
+     *
+     * 通知行がまだ無い予約は同じトランザクション内で pending 行を作るため、
+     * 予約COMMIT後〜初回通知行作成前にプロセスが落ちたケースもCronから復旧できる。
+     *
+     * @param list<int> $bookingIds
+     * @return array<int, array{token: string, retry_key: string, attempt: int, first_attempt_at: string}>|null
+     *         全件claim成功なら booking_id => claim、1件でも不可なら null
+     */
+    public function claimMany(
+        array $bookingIds,
+        string $type,
+        int $maxAttempts,
+        ?string $now = null
+    ): ?array {
         $now ??= Time::nowUtc();
-        $staleBefore = $this->staleCutoff($now);
-        $token = bin2hex(random_bytes(16));
-        $newRetryKey = Uuid::v4();
-
-        // 既にあれば無視される（UNIQUE制約）
-        $this->db->run(
-            'INSERT IGNORE INTO notifications
-               (booking_id, notification_type, status, attempt_count,
-                line_retry_key, created_at, updated_at)
-             VALUES (?, ?, \'pending\', 0, ?, ?, ?)',
-            [$bookingId, $type, $newRetryKey, $now, $now]
-        );
-
-        $changed = $this->db->run(
-            'UPDATE notifications
-                SET status = \'sending\',
-                    claim_token = ?,
-                    line_retry_key = COALESCE(line_retry_key, ?),
-                    attempt_count = attempt_count + 1,
-                    updated_at = ?
-              WHERE booking_id = ? AND notification_type = ?
-                AND attempt_count < ?
-                AND (status IN (\'pending\', \'failed\')
-                     OR (status = \'sending\' AND updated_at < ?))',
-            [$token, $newRetryKey, $now, $bookingId, $type, $maxAttempts, $staleBefore]
-        );
-
-        if ($changed === 0) {
-            return null;
+        $ids = array_values(array_unique(array_map('intval', $bookingIds)));
+        $ids = array_values(array_filter($ids, static fn (int $id): bool => $id > 0));
+        sort($ids, SORT_NUMERIC);
+        if ($ids === []) {
+            return [];
         }
 
-        // 実際に保存されている値を読み直す
-        // （retry key は初回なら今生成したもの、再試行時は最初に発行したもの）
-        $row = $this->db->first(
-            'SELECT line_retry_key, attempt_count, created_at FROM notifications
-              WHERE booking_id = ? AND notification_type = ? AND claim_token = ?',
-            [$bookingId, $type, $token]
-        );
+        $staleBefore = $this->staleCutoff($now);
 
-        return [
-            'token' => $token,
-            'retry_key' => is_string($row['line_retry_key'] ?? null) ? $row['line_retry_key'] : $newRetryKey,
-            'attempt' => (int) ($row['attempt_count'] ?? 1),
-            // 行の作成＝1回目のclaim（＝初回送信試行）と同一のリクエスト内。
-            // retry key の有効期限判定の基準に使う。
-            'first_attempt_at' => (string) ($row['created_at'] ?? $now),
-        ];
+        return $this->db->transaction(function (Db $db) use ($ids, $type, $maxAttempts, $now, $staleBefore): ?array {
+            // ロック順序を booking_id 昇順に固定し、同時実行時のデッドロックを抑える。
+            foreach ($ids as $bookingId) {
+                $db->run(
+                    'INSERT IGNORE INTO notifications
+                       (booking_id, notification_type, status, attempt_count,
+                        line_retry_key, created_at, updated_at)
+                     VALUES (?, ?, \'pending\', 0, ?, ?, ?)',
+                    [$bookingId, $type, Uuid::v4(), $now, $now]
+                );
+            }
+
+            $placeholders = implode(',', array_fill(0, count($ids), '?'));
+            $rows = $db->all(
+                'SELECT booking_id, status, attempt_count, line_retry_key, created_at, updated_at
+                   FROM notifications
+                  WHERE notification_type = ?
+                    AND booking_id IN (' . $placeholders . ')
+                  ORDER BY booking_id ASC
+                  FOR UPDATE',
+                array_merge([$type], $ids)
+            );
+
+            if (count($rows) !== count($ids)) {
+                return null;
+            }
+
+            /** @var array<int, array<string, mixed>> $byId */
+            $byId = [];
+            foreach ($rows as $row) {
+                $byId[(int) $row['booking_id']] = $row;
+            }
+
+            foreach ($ids as $bookingId) {
+                $row = $byId[$bookingId] ?? null;
+                if ($row === null || (int) $row['attempt_count'] >= $maxAttempts) {
+                    return null;
+                }
+
+                $status = (string) $row['status'];
+                $retryable = in_array($status, ['pending', 'failed'], true)
+                    || ($status === 'sending' && (string) $row['updated_at'] < $staleBefore);
+                if (!$retryable) {
+                    return null;
+                }
+            }
+
+            $claims = [];
+            foreach ($ids as $bookingId) {
+                $row = $byId[$bookingId];
+                $token = bin2hex(random_bytes(16));
+                $newRetryKey = Uuid::v4();
+                $storedRetryKey = is_string($row['line_retry_key'] ?? null)
+                    && trim((string) $row['line_retry_key']) !== ''
+                    ? (string) $row['line_retry_key']
+                    : $newRetryKey;
+
+                $db->run(
+                    'UPDATE notifications
+                        SET status = \'sending\',
+                            claim_token = ?,
+                            line_retry_key = COALESCE(NULLIF(line_retry_key, \'\'), ?),
+                            attempt_count = attempt_count + 1,
+                            updated_at = ?
+                      WHERE booking_id = ? AND notification_type = ?',
+                    [$token, $newRetryKey, $now, $bookingId, $type]
+                );
+
+                $claims[$bookingId] = [
+                    'token' => $token,
+                    'retry_key' => $storedRetryKey,
+                    'attempt' => (int) $row['attempt_count'] + 1,
+                    'first_attempt_at' => (string) $row['created_at'],
+                ];
+            }
+
+            return $claims;
+        });
     }
 
     /**
@@ -157,17 +213,11 @@ final class NotificationRepository
     /**
      * 予約完了通知の再試行候補。
      *
-     * 一括予約は初回送信時に複数予約から1つの X-Line-Retry-Key を決定的に
-     * 導出しているため、グループの一部だけを再送すると retry key と本文が変わり、
-     * LINE側の重複排除が効かなくなる。そのためグループについては以下を満たす場合だけ返す。
-     *
-     * - 全予約が confirmed
-     * - requested / skipped が1件もない
-     * - 試行上限到達が1件もない
-     * - 現在送信中（staleではない sending）が1件もない
-     *
-     * `pending` / `failed` / stale `sending` は claim() が安全に再取得できる。
-     * 管理者代理予約・ユーザー紐付けなし・キャンセル済みは対象外。
+     * 通知行が無い予約も候補に含める。これにより、予約COMMIT後に
+     * 初回通知処理が通知行作成前で落ちてもCronから復旧できる。
+     * 一括予約はグループ全件がconfirmedかつ送信可能な状態のときだけ候補にする。
+     * 実際の排他は claimMany() が FOR UPDATE 下で再検証するため、
+     * 候補取得後に競合しても部分送信にはならない。
      *
      * @return list<array{booking_id: int|string, booking_group_id: ?string}>
      */
@@ -178,14 +228,19 @@ final class NotificationRepository
         return $this->db->all(
             'SELECT b.id AS booking_id, b.booking_group_id
                FROM bookings b
-               JOIN notifications n
+               LEFT JOIN notifications n
                  ON n.booking_id = b.id AND n.notification_type = \'booking_confirmation\'
               WHERE b.status = \'confirmed\'
                 AND b.source <> \'admin\'
                 AND b.user_id IS NOT NULL
-                AND n.attempt_count < ?
-                AND (n.status IN (\'pending\', \'failed\')
-                     OR (n.status = \'sending\' AND n.updated_at < ?))
+                AND (
+                    n.id IS NULL
+                    OR (
+                        n.attempt_count < ?
+                        AND (n.status IN (\'pending\', \'failed\')
+                             OR (n.status = \'sending\' AND n.updated_at < ?))
+                    )
+                )
                 AND (
                     b.booking_group_id IS NULL
                     OR (
@@ -193,15 +248,20 @@ final class NotificationRepository
                             SELECT 1
                               FROM bookings bg
                              WHERE bg.booking_group_id = b.booking_group_id
-                               AND bg.status <> \'confirmed\'
+                               AND (
+                                   bg.status <> \'confirmed\'
+                                   OR bg.source = \'admin\'
+                                   OR bg.user_id IS NULL
+                               )
                         )
                         AND NOT EXISTS (
                             SELECT 1
                               FROM bookings bg
-                              JOIN notifications ng
+                              LEFT JOIN notifications ng
                                 ON ng.booking_id = bg.id
                                AND ng.notification_type = \'booking_confirmation\'
                              WHERE bg.booking_group_id = b.booking_group_id
+                               AND ng.id IS NOT NULL
                                AND (
                                    ng.status IN (\'requested\', \'skipped\')
                                    OR ng.attempt_count >= ?
