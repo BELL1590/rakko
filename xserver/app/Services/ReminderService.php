@@ -219,6 +219,72 @@ final class ReminderService
     }
 
     /**
+     * 失敗した予約完了通知をCronから再試行する。
+     *
+     * NotificationRepository が「同じ一括予約グループを安全に丸ごと再claimできる」
+     * 候補だけを返す。ここでは同じ booking_group_id を1回にまとめ、初回と同じ
+     * booking ID集合で sendBookingConfirmation() を呼ぶことで、本文と
+     * X-Line-Retry-Key の決定性を維持する。
+     *
+     * @return array{checked: int, requested: int, failed: int, skipped: int, already: int}
+     */
+    public function processFailedBookingConfirmations(?string $now = null): array
+    {
+        $now ??= Time::nowUtc();
+        $targets = $this->notifications->listRetryableBookingConfirmationTargets(
+            $now,
+            self::MAX_ATTEMPTS
+        );
+
+        /** @var array<string, list<int>> $groups */
+        $groups = [];
+        foreach ($targets as $target) {
+            $bookingId = (int) $target['booking_id'];
+            $groupId = $target['booking_group_id'] !== null
+                ? (string) $target['booking_group_id']
+                : null;
+            $key = $groupId !== null ? 'group:' . $groupId : 'booking:' . $bookingId;
+
+            if (isset($groups[$key])) {
+                continue;
+            }
+
+            if ($groupId === null) {
+                $groups[$key] = [$bookingId];
+                continue;
+            }
+
+            $groupBookings = array_values(array_filter(
+                $this->bookings->listByGroup($groupId),
+                static fn (array $booking): bool => $booking['status'] === 'confirmed'
+            ));
+            $groups[$key] = array_map(
+                static fn (array $booking): int => (int) $booking['id'],
+                $groupBookings
+            );
+        }
+
+        $summary = [
+            'checked' => count($groups),
+            'requested' => 0,
+            'failed' => 0,
+            'skipped' => 0,
+            'already' => 0,
+        ];
+
+        foreach ($groups as $bookingIds) {
+            if ($bookingIds === []) {
+                $summary['skipped']++;
+                continue;
+            }
+            $outcome = $this->sendBookingConfirmation($bookingIds, $now);
+            $summary[$outcome] = ($summary[$outcome] ?? 0) + 1;
+        }
+
+        return $summary;
+    }
+
+    /**
      * reminder_at を過ぎた予約枠の確定予約へリマインドを送る。
      * Cron から5分おきに呼ばれる想定。送信単位は枠。
      *
