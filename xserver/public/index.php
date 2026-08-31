@@ -5,8 +5,12 @@ declare(strict_types=1);
 /**
  * フロントコントローラ。XSERVER（Apache + mod_rewrite）配下で全リクエストを受ける。
  *
- * アプリ本体（app/, config/）はドキュメントルートの外に置く前提のため、
- * 相対参照は必ずこのファイルからの相対パスで解決する。
+ * app-root の解決順:
+ *   1. サーバー管理下の環境変数 RAKKO_APP_ROOT
+ *   2. リポジトリ標準配置: dirname(__DIR__)
+ *   3. XSERVER標準配置: public_html の兄弟 app-root/
+ *
+ * 本番固有パスをGit管理中のこのファイルへ直接書き込まない。
  */
 
 use App\App;
@@ -15,12 +19,35 @@ use App\Http\Response;
 use App\Http\SecurityHeaders;
 use App\Support\ConfigError;
 
-// ⚠ 本番XSERVERでは public のドキュメントルートと app-root が別ディレクトリのため、
-//    この1行を本番固有の絶対パスに書き換えてある。
-//    例: $root = '/home/<account>/yunoizumi.com/rakko-app';
-//    このファイルを差し替えるときは、必ず本番の $root を維持すること。
-//    リポジトリの dirname(__DIR__) をそのまま上書きすると bootstrap が壊れる。
-$root = dirname(__DIR__);
+$configuredRoot = getenv('RAKKO_APP_ROOT');
+$candidates = [];
+if (is_string($configuredRoot) && trim($configuredRoot) !== '') {
+    $candidates[] = rtrim(trim($configuredRoot), "/\\");
+}
+$candidates[] = dirname(__DIR__);
+$candidates[] = dirname(__DIR__) . '/app-root';
+
+$root = null;
+$bootstrap = null;
+foreach (array_values(array_unique($candidates)) as $candidate) {
+    $candidateBootstrap = $candidate . '/app/bootstrap.php';
+    if (is_file($candidateBootstrap)) {
+        $root = $candidate;
+        $bootstrap = $candidateBootstrap;
+        break;
+    }
+}
+
+// ユーザー入力（Host/URI/GET/POST/Cookie）からapp-rootを決めない。
+// 設定ミス時は内部パスをレスポンスへ出さず、安全に停止する。
+// ループ後にもbootstrapを再確認し、解決後の前提を明示的に固定する。
+if ($root === null || $bootstrap === null || !is_file($bootstrap)) {
+    error_log('[bootstrap] app root was not found; check RAKKO_APP_ROOT or sibling app-root');
+    http_response_code(500);
+    header('Content-Type: text/plain; charset=utf-8');
+    echo 'Application configuration error.';
+    exit(1);
+}
 
 // ビルトインサーバー（php -S ... public/index.php）は全リクエストをこのファイルへ渡すため、
 // /assets/* のような実ファイルを自分で返す必要がある。
@@ -33,7 +60,7 @@ if (PHP_SAPI === 'cli-server') {
     }
 }
 
-require_once $root . '/app/bootstrap.php';
+require_once $bootstrap;
 
 $request = Request::fromGlobals();
 

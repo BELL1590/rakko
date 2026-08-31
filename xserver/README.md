@@ -62,7 +62,8 @@ xserver/
 │   ├── 0002_seed_rakko.sql
 │   ├── 0003_notification_sending_state.sql
 │   ├── 0004_notification_line_retry_key.sql
-│   └── 0005_reservation_page_notice_text.sql
+│   ├── 0005_reservation_page_notice_text.sql
+│   └── 0006_user_friend_status_checked_at.sql
 ├── public/                     # ← ここだけをドキュメントルートにする
 │   ├── .htaccess
 │   ├── index.php               # フロントコントローラ
@@ -161,8 +162,10 @@ sending                 -> requested / failed / skipped
 sending が長時間放置     -> sending    （送信中に落ちたプロセスの後始末）
 ```
 
-`claim()` は次の単一UPDATEで送信権を取ります。MySQL はUPDATEで行ロックを取ったあとに
-WHERE句を再評価するため、同時に走った2つ目のUPDATEは `sending` になった行に一致せず0行になります。
+単一通知は `claim()`、一括通知は `claimMany()` で送信権を取ります。
+一括通知は対象行を booking_id 昇順に `SELECT ... FOR UPDATE` し、**全件がclaim可能な場合だけ**
+全件を `sending` へ進めます。並行Cronが走っても一括予約の一部だけを送ることはありません。
+単一通知も同じall-or-nothing実装を1件で利用します。
 
 ```sql
 UPDATE notifications
@@ -253,6 +256,7 @@ LINEログイン
 - 友だち状態は**LINEログイン時**に取得して `users.is_line_friend` へ保存します。
   友だち追加した直後は保存済みの値が古いため、案内カードの
   「友だち追加を確認して予約に進む」から**再ログイン**して取り直します。
+- `users.friend_status_checked_at` にLINE Platformで最後に確認できた時刻を保存します。 **trueでも5分を超えた確認結果は予約判定では不明扱い**にし、LIFF / LINE Loginでの再確認を必須にします。 長寿命の `rk_session` Cookieだけで古いtrueを使い続けることはありません。
 - 判定は `BookingService` でも行うため、画面を迂回してPOSTしても通りません。
 - 友だち状態を取得できなかった（`NULL`）場合も未追加として扱います。
   「たぶん友だち」で通すと、通知が届かないまま当日を迎えるためです。
@@ -296,9 +300,9 @@ rk_session をその端末に発行
   `/liff` のHTMLには最初から `/login` へのリンクと `<noscript>` を置いてあるので、
   JSが動かなくても行き止まりになりません。
 
-CSPは `/liff` のときだけ、LIFF SDKの配信元（`https://static.line-scdn.net`）と
-LINEのAPI（`https://api.line.me`）を追加で許可します。他のページの
-CSPは従来どおり絞ったままです。
+CSPは `/liff` と `/liff/reserve/{slug}` のときだけ、LIFF SDKの配信元
+（`https://static.line-scdn.net`）とLINEのAPI（`https://api.line.me`）を追加で許可します。
+それ以外のページのCSPは従来どおり絞ったままです。
 
 ### スマートフォンでのLINEアプリ起動（auto login）
 
@@ -457,23 +461,19 @@ find app bin public tests -name '*.php' -print0 | xargs -0 -n1 php8.0 -l
 /home/<account>/yunoizumi.com/public_html/   ← 既存サイト。触らない
 ```
 
-> **⚠ `public/index.php` を差し替えるときの注意**
+> **`public/index.php` は本番でも手修正せず、そのまま配置してください。**
 >
-> 本番はドキュメントルートと `app-root` が別ディレクトリのため、
-> `public/index.php` 冒頭の `$root` を**本番固有の絶対パス**に書き換えてあります。
+> app-root は次の順で安全に解決します。
+> 1. `RAKKO_APP_ROOT` 環境変数（明示override）
+> 2. リポジトリ標準配置の `dirname(__DIR__)`
+> 3. XSERVER標準配置の `public_html` と同階層にある `app-root/`
 >
-> ```php
-> $root = '/home/<account>/yunoizumi.com/rakko-app';   // 本番の値
-> ```
->
-> リポジトリ版は `$root = dirname(__DIR__);` です。
-> **そのまま上書きすると bootstrap が壊れて全ページが500になります。**
-> このファイルを反映するときは、必ず本番の `$root` を維持してください。
+> どれにも `app/bootstrap.php` が無ければ、内部パスを出さずHTTP 500で停止します。
+> Host / URI / GET / POST / Cookie からapp-rootを決めることはありません。
 
 `xserver/public/` の中身を `public_html/` へ、それ以外を `app-root/` へ配置します。
-`public/index.php` は `dirname(__DIR__)` を参照するため、
-`public_html` と `app-root` を並べる構成では index.php 冒頭の `$root` を
-`/home/<account>/reserve.yunoizumi.com/app-root` に書き換えてください（1行）。
+この標準構成では `public/index.php` が兄弟の `app-root/` を自動検出するため、**ファイルの手修正は不要**です。
+既存環境などでapp-rootの場所が異なる場合だけ、Web実行環境から参照できる `RAKKO_APP_ROOT` に絶対パスを設定してください。
 
 同梱の `.htaccess` はこのサブドメインのドキュメントルートにのみ置かれるため、
 既存サイトの `.htaccess` やリライト設定には影響しません。
@@ -517,7 +517,7 @@ SSH（または「PHP」→ CLI が使える環境）で:
 `0002_seed_rakko.sql` は「らっこ号 池袋便」の初期データを入れます。
 不要なら適用前にファイルを削除してください（適用後の削除は無意味です）。
 
-### 6-7. Cron（リマインド送信）
+### 6-7. Cron（通知送信）
 
 サーバーパネル →「Cron設定」→「Cron追加」
 
