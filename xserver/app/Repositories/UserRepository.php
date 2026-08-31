@@ -28,7 +28,10 @@ final class UserRepository
 
     /**
      * LINEユーザーを作成 or 更新する。
-     * 友だち状態は取得できたときだけ上書きする（NULLで既存値を消さない）。
+     *
+     * 友だち状態はサーバーが今回LINEへ問い合わせた結果をそのまま保存する。
+     * `null`（取得不能）も明示的に保存し、過去の true を保持しない。
+     * これによりLINE API障害時は BookingService 側で必ず fail closed になる。
      *
      * @return array<string, mixed>
      */
@@ -49,7 +52,7 @@ final class UserRepository
              ON DUPLICATE KEY UPDATE
                line_display_name = VALUES(line_display_name),
                line_picture_url  = VALUES(line_picture_url),
-               is_line_friend    = COALESCE(VALUES(is_line_friend), users.is_line_friend),
+               is_line_friend    = VALUES(is_line_friend),
                updated_at        = VALUES(updated_at)',
             [$lineUserId, $displayName, $pictureUrl, $friend, $now, $now]
         );
