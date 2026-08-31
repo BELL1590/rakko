@@ -48,8 +48,10 @@ final class NotificationRepository
      * **全件がclaim可能な場合だけ**全件を sending へ進める。
      * 1件でも requested/skipped/上限到達/非stale sending なら0件claimする。
      *
-     * 通知行がまだ無い予約は同じトランザクション内で pending 行を作るため、
-     * 予約COMMIT後〜初回通知行作成前にプロセスが落ちたケースもCronから復旧できる。
+     * 通知行がまだ無い予約は claim トランザクションの前に INSERT IGNORE で作る。
+     * 行作成自体は冪等で送信権ではないためautocommitとし、同一未作成行へ多数の
+     * プロセスが同時INSERTしてトランザクション同士がdeadlockすることを避ける。
+     * 送信権のall-or-nothing判定と更新だけをFOR UPDATEのトランザクション内で行う。
      *
      * @param list<int> $bookingIds
      * @return array<int, array{token: string, retry_key: string, attempt: int, first_attempt_at: string}>|null
@@ -71,18 +73,21 @@ final class NotificationRepository
 
         $staleBefore = $this->staleCutoff($now);
 
-        return $this->db->transaction(function (Db $db) use ($ids, $type, $maxAttempts, $now, $staleBefore): ?array {
-            // ロック順序を booking_id 昇順に固定し、同時実行時のデッドロックを抑える。
-            foreach ($ids as $bookingId) {
-                $db->run(
-                    'INSERT IGNORE INTO notifications
-                       (booking_id, notification_type, status, attempt_count,
-                        line_retry_key, created_at, updated_at)
-                     VALUES (?, ?, \'pending\', 0, ?, ?, ?)',
-                    [$bookingId, $type, Uuid::v4(), $now, $now]
-                );
-            }
+        // 行作成は送信権の取得ではない。autocommitで先に確定することで、
+        // 多数プロセスが同じ未作成行を同一トランザクション内でINSERTして
+        // deadlockすることを避ける。途中で落ちてもpending行が残るだけで安全。
+        foreach ($ids as $bookingId) {
+            $this->db->run(
+                'INSERT IGNORE INTO notifications
+                   (booking_id, notification_type, status, attempt_count,
+                    line_retry_key, created_at, updated_at)
+                 VALUES (?, ?, \'pending\', 0, ?, ?, ?)',
+                [$bookingId, $type, Uuid::v4(), $now, $now]
+            );
+        }
 
+        return $this->db->transaction(function (Db $db) use ($ids, $type, $maxAttempts, $now, $staleBefore): ?array {
+            // ここからが送信権。全対象行を同じ順序でロックして全件可否を一括判定する。
             $placeholders = implode(',', array_fill(0, count($ids), '?'));
             $rows = $db->all(
                 'SELECT booking_id, status, attempt_count, line_retry_key, created_at, updated_at
