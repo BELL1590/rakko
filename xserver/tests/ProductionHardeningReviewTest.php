@@ -247,6 +247,6 @@ describe('Review fix: app-root deployment', function (): void {
         assertContains("getenv('RAKKO_APP_ROOT')", $source, '環境変数overrideを維持する');
         assertContains("dirname(__DIR__) . '/app-root'", $source, 'public_html兄弟のapp-rootを候補にする');
         assertContains('array_unique($candidates)', $source);
-        assertNotContains("$root = '/home/", $source, '本番固有パスを埋め込まない');
+        assertNotContains("\$root = '/home/", $source, '本番固有パスを埋め込まない');
     });
 });
