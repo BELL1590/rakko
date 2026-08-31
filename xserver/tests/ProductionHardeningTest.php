@@ -305,6 +305,6 @@ describe('Production hardening: app root configuration', function (): void {
         assertContains("dirname(__DIR__)", $source, '未設定時のローカルfallbackを維持する');
         assertContains('is_file($bootstrap)', $source, 'bootstrap存在確認を行う');
         assertContains('Application configuration error.', $source, '内部パスを出さない失敗応答を持つ');
-        assertNotContains("$root = '/home/", $source, '本番固有の絶対パスを埋め込まない');
+        assertNotContains('$root = \'/home/', $source, '本番固有の絶対パスを埋め込まない');
     });
 });
