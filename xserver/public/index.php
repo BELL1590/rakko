@@ -5,10 +5,12 @@ declare(strict_types=1);
 /**
  * フロントコントローラ。XSERVER（Apache + mod_rewrite）配下で全リクエストを受ける。
  *
- * ローカル/同居配置では dirname(__DIR__) を app-root として使う。
- * 本番のようにドキュメントルートとアプリ本体を分離する場合は、
- * サーバー管理下の環境変数 RAKKO_APP_ROOT に app-root の絶対パスを設定する。
- * Git管理中のこのファイルを本番だけ手修正してはならない。
+ * app-root の解決順:
+ *   1. サーバー管理下の環境変数 RAKKO_APP_ROOT
+ *   2. リポジトリ標準配置: dirname(__DIR__)
+ *   3. XSERVER標準配置: public_html の兄弟 app-root/
+ *
+ * 本番固有パスをGit管理中のこのファイルへ直接書き込まない。
  */
 
 use App\App;
@@ -18,15 +20,28 @@ use App\Http\SecurityHeaders;
 use App\Support\ConfigError;
 
 $configuredRoot = getenv('RAKKO_APP_ROOT');
-$root = is_string($configuredRoot) && trim($configuredRoot) !== ''
-    ? rtrim(trim($configuredRoot), "/\\")
-    : dirname(__DIR__);
-$bootstrap = $root . '/app/bootstrap.php';
+$candidates = [];
+if (is_string($configuredRoot) && trim($configuredRoot) !== '') {
+    $candidates[] = rtrim(trim($configuredRoot), "/\\");
+}
+$candidates[] = dirname(__DIR__);
+$candidates[] = dirname(__DIR__) . '/app-root';
+
+$root = null;
+$bootstrap = null;
+foreach (array_values(array_unique($candidates)) as $candidate) {
+    $candidateBootstrap = $candidate . '/app/bootstrap.php';
+    if (is_file($candidateBootstrap)) {
+        $root = $candidate;
+        $bootstrap = $candidateBootstrap;
+        break;
+    }
+}
 
 // ユーザー入力（Host/URI/GET/POST/Cookie）からapp-rootを決めない。
 // 設定ミス時は内部パスをレスポンスへ出さず、安全に停止する。
-if (!is_file($bootstrap)) {
-    error_log('[bootstrap] RAKKO_APP_ROOT does not contain app/bootstrap.php');
+if ($root === null || $bootstrap === null) {
+    error_log('[bootstrap] app root was not found; check RAKKO_APP_ROOT or sibling app-root');
     http_response_code(500);
     header('Content-Type: text/plain; charset=utf-8');
     echo 'Application configuration error.';
