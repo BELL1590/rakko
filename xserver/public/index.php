@@ -40,7 +40,8 @@ foreach (array_values(array_unique($candidates)) as $candidate) {
 
 // ユーザー入力（Host/URI/GET/POST/Cookie）からapp-rootを決めない。
 // 設定ミス時は内部パスをレスポンスへ出さず、安全に停止する。
-if ($root === null || $bootstrap === null) {
+// ループ後にもbootstrapを再確認し、解決後の前提を明示的に固定する。
+if ($root === null || $bootstrap === null || !is_file($bootstrap)) {
     error_log('[bootstrap] app root was not found; check RAKKO_APP_ROOT or sibling app-root');
     http_response_code(500);
     header('Content-Type: text/plain; charset=utf-8');
