@@ -34,8 +34,11 @@ final class ReminderService
     }
 
     /**
-     * 通知を送信する。複数予約を1通にまとめる場合は、
-     * 送信権を確保できた予約だけを対象にする。
+     * 通知を送信する。
+     *
+     * 複数予約を1通にまとめる場合は、全予約の送信権をall-or-nothingで確保する。
+     * 1件でもclaimできなければ1通も送らず `already` とするため、並行Cronでも
+     * 一括予約が「行きだけ」「帰りだけ」に分裂して送信されない。
      *
      * @param list<int> $bookingIds
      * @param callable(list<int>): string $buildText
@@ -50,15 +53,13 @@ final class ReminderService
     ): string {
         $now ??= Time::nowUtc();
 
-        // 送信権を取れた予約だけを対象にする（token を持つ＝このプロセスが送る）
-        $claimed = [];
-        foreach ($bookingIds as $bookingId) {
-            $claim = $this->notifications->claim($bookingId, $type, self::MAX_ATTEMPTS, $now);
-            if ($claim !== null) {
-                $claimed[$bookingId] = $claim;
-            }
-        }
-        if ($claimed === []) {
+        $claimed = $this->notifications->claimMany(
+            $bookingIds,
+            $type,
+            self::MAX_ATTEMPTS,
+            $now
+        );
+        if ($claimed === null || $claimed === []) {
             return 'already';
         }
 
@@ -225,6 +226,7 @@ final class ReminderService
      * 候補だけを返す。ここでは同じ booking_group_id を1回にまとめ、初回と同じ
      * booking ID集合で sendBookingConfirmation() を呼ぶことで、本文と
      * X-Line-Retry-Key の決定性を維持する。
+     * 実際のclaimは dispatch() -> claimMany() がトランザクション内で再検証する。
      *
      * @return array{checked: int, requested: int, failed: int, skipped: int, already: int}
      */
