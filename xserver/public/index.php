@@ -5,8 +5,10 @@ declare(strict_types=1);
 /**
  * フロントコントローラ。XSERVER（Apache + mod_rewrite）配下で全リクエストを受ける。
  *
- * アプリ本体（app/, config/）はドキュメントルートの外に置く前提のため、
- * 相対参照は必ずこのファイルからの相対パスで解決する。
+ * ローカル/同居配置では dirname(__DIR__) を app-root として使う。
+ * 本番のようにドキュメントルートとアプリ本体を分離する場合は、
+ * サーバー管理下の環境変数 RAKKO_APP_ROOT に app-root の絶対パスを設定する。
+ * Git管理中のこのファイルを本番だけ手修正してはならない。
  */
 
 use App\App;
@@ -15,12 +17,21 @@ use App\Http\Response;
 use App\Http\SecurityHeaders;
 use App\Support\ConfigError;
 
-// ⚠ 本番XSERVERでは public のドキュメントルートと app-root が別ディレクトリのため、
-//    この1行を本番固有の絶対パスに書き換えてある。
-//    例: $root = '/home/<account>/yunoizumi.com/rakko-app';
-//    このファイルを差し替えるときは、必ず本番の $root を維持すること。
-//    リポジトリの dirname(__DIR__) をそのまま上書きすると bootstrap が壊れる。
-$root = dirname(__DIR__);
+$configuredRoot = getenv('RAKKO_APP_ROOT');
+$root = is_string($configuredRoot) && trim($configuredRoot) !== ''
+    ? rtrim(trim($configuredRoot), "/\\")
+    : dirname(__DIR__);
+$bootstrap = $root . '/app/bootstrap.php';
+
+// ユーザー入力（Host/URI/GET/POST/Cookie）からapp-rootを決めない。
+// 設定ミス時は内部パスをレスポンスへ出さず、安全に停止する。
+if (!is_file($bootstrap)) {
+    error_log('[bootstrap] RAKKO_APP_ROOT does not contain app/bootstrap.php');
+    http_response_code(500);
+    header('Content-Type: text/plain; charset=utf-8');
+    echo 'Application configuration error.';
+    exit(1);
+}
 
 // ビルトインサーバー（php -S ... public/index.php）は全リクエストをこのファイルへ渡すため、
 // /assets/* のような実ファイルを自分で返す必要がある。
@@ -33,7 +44,7 @@ if (PHP_SAPI === 'cli-server') {
     }
 }
 
-require_once $root . '/app/bootstrap.php';
+require_once $bootstrap;
 
 $request = Request::fromGlobals();
 
