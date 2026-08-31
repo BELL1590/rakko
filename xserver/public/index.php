@@ -8,7 +8,8 @@ declare(strict_types=1);
  * app-root の解決順:
  *   1. サーバー管理下の環境変数 RAKKO_APP_ROOT
  *   2. リポジトリ標準配置: dirname(__DIR__)
- *   3. XSERVER標準配置: public_html の兄弟 app-root/
+ *   3. XSERVER独立ドキュメントルート配置: public_html の兄弟 app-root/
+ *   4. XSERVERサブドメイン配置: <domain>/public_html/<subdomain>/ の2階層上にある app-root/
  *
  * 本番固有パスをGit管理中のこのファイルへ直接書き込まない。
  */
@@ -26,6 +27,7 @@ if (is_string($configuredRoot) && trim($configuredRoot) !== '') {
 }
 $candidates[] = dirname(__DIR__);
 $candidates[] = dirname(__DIR__) . '/app-root';
+$candidates[] = dirname(dirname(__DIR__)) . '/app-root';
 
 $root = null;
 $bootstrap = null;
@@ -42,7 +44,7 @@ foreach (array_values(array_unique($candidates)) as $candidate) {
 // 設定ミス時は内部パスをレスポンスへ出さず、安全に停止する。
 // ループ後にもbootstrapを再確認し、解決後の前提を明示的に固定する。
 if ($root === null || $bootstrap === null || !is_file($bootstrap)) {
-    error_log('[bootstrap] app root was not found; check RAKKO_APP_ROOT or sibling app-root');
+    error_log('[bootstrap] app root was not found; check RAKKO_APP_ROOT or app-root placement');
     http_response_code(500);
     header('Content-Type: text/plain; charset=utf-8');
     echo 'Application configuration error.';
